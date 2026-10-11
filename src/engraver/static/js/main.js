@@ -1,12 +1,13 @@
 // Entry point: loads state from the server, wires the top bar, toolbar,
 // property bar, job bar and keyboard, and starts the panels.
 
-import { state, on, emit, bed, commit, undo, redo, canUndo, canRedo, select, selected, layerById, loadDoc, storedProject, serialize, uid } from "./store.js";
+import { state, on, emit, bed, commit, undo, redo, canUndo, canRedo, select, selected, layerById, loadDoc, storedProject, serialize, uid, setMaterials } from "./store.js";
 import { api, post, connectEvents } from "./api.js";
-import { h, icon, toast, modal, formatDuration, act, download, fill } from "./ui.js";
+import { h, icon, toast, modal, formatDuration, act, download } from "./ui.js";
 import { initStage, fitView, zoomBy, viewCenter, aabb, isTyping, onDoubleClick, outputObjects } from "./stage.js";
 import { objectFromSvgText, objectFromImage, objectFromText, objectFromShape, textContent, fitSize, sanitizeMarkup, FONTS } from "./svgutil.js";
 import { buildJob } from "./job.js";
+import { confirmAndStart, frame } from "./run.js";
 import { initDesign } from "./design.js";
 import { initLaser, addLog } from "./laser.js";
 import { initSetup } from "./setup.js";
@@ -356,31 +357,12 @@ function initStatus() {
 
 async function startJob() {
   const { job, warnings } = await buildJob("Job");
-  const summary = await post("/api/job/preview", { job });
-  const all = [...warnings, ...summary.warnings];
-  const layers = job.layers.map((l) => `${l.name}: ${l.mode}, ${l.speed} mm/min, ${l.power}%${l.passes > 1 ? `, ${l.passes} passes` : ""}`);
-  const answer = await modal((form) => {
-    fill(form,
-      h("h1", {}, "Start burning?"),
-      h("dl", { class: "facts" },
-        h("dt", {}, "Size"), h("dd", {}, `${summary.width} × ${summary.height} mm`),
-        h("dt", {}, "Time"), h("dd", {}, `about ${formatDuration(summary.est_seconds)}`),
-        h("dt", {}, "Starts from"), h("dd", {}, job.origin_mode === "origin" ? "the origin (design's front-left corner)" : "its position on the bed"),
-        ...layers.flatMap((line, i) => [h("dt", {}, i ? "" : "Layers"), h("dd", {}, line)])),
-      all.length ? h("ul", {}, all.map((w) => h("li", {}, w))) : null,
-      h("p", { class: "note" }, "Goggles on, material flat and in focus, and stay with the machine while it runs."),
-      h("div", { class: "actions" },
-        h("button", { class: "btn", value: "", autofocus: true }, "Cancel"),
-        h("button", { class: "btn primary", value: "go" }, "Start burning")),
-    );
-  });
-  if (answer !== "go") return;
-  await post("/api/job/start", { job });
+  await confirmAndStart(job, warnings);
 }
 
 async function frameJob() {
   const { job } = await buildJob("Job");
-  await post("/api/job/frame", { job, dot_power: state.ui.frameDot ? 2 : 0 });
+  await frame(job);
 }
 
 function initJobs() {
@@ -462,7 +444,8 @@ async function boot() {
   initProject();
   try {
     const data = await api("/api/state");
-    Object.assign(state, { status: data.status, config: data.config, machine: data.machine, materials: data.materials, never: data.never });
+    Object.assign(state, { status: data.status, config: data.config, machine: data.machine, never: data.never });
+    setMaterials({ builtin: data.materials, library: data.library });
     for (const entry of data.log) addLog(entry);
   } catch (error) {
     toast(error.message, "error");

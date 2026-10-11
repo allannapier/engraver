@@ -96,6 +96,8 @@ near(undone.y, before.y, 0.001);
 
 step("resizing from a corner handle keeps proportions when locked");
 await page.click("#prop-lock");
+// The canvas redraws on the next frame; measure the handle after that, not mid-redraw.
+await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
 const handle = await page.locator('[data-handle="4"]').boundingBox();
 await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
 await page.mouse.down();
@@ -194,7 +196,7 @@ assert.equal(cutCode.match(/G1 /g).length, 3 * onePass.match(/G1 /g).length, "th
 
 step("material presets fill in a layer");
 await page.selectOption("#material", "plywood-3");
-await page.locator(".layer").nth(1).locator('select[aria-label="Use a preset"]').selectOption("cut");
+await page.locator(".layer").nth(1).locator('select[aria-label="Presets"]').selectOption("use:cut");
 const cut = await store((s) => ({ ...s.state.doc.layers[1] }));
 assert.deepEqual([cut.speed, cut.power, cut.passes, cut.mode], [300, 100, 2, "line"]);
 
@@ -255,6 +257,125 @@ await waitStatus((s) => s.job.kind === "job" && s.job.state === "done");
 assert.equal(await page.getAttribute("#job-bar", "aria-valuenow"), "100");
 assert.match(await page.textContent("#job-title"), /finished/);
 
+step("saving a layer's settings makes your own copy of the material");
+await page.click('[data-tab="design"]');
+await page.locator(".layer").nth(1).locator('select[aria-label="Presets"]').selectOption("save:cut");
+await page.waitForFunction(() => window.__store.state.library[0]?.cut?.source === "saved");
+let lib = await store((s) => ({ mats: s.state.library, picked: s.state.ui.materialId }));
+const plyId = lib.mats[0].id;
+assert.equal(lib.mats[0].name, "Plywood (basswood/birch), 3 mm");
+assert.equal(lib.picked, plyId, "the copy becomes the material in use");
+assert.deepEqual([lib.mats[0].cut.speed, lib.mats[0].cut.passes, lib.mats[0].cut.source], [300, 2, "saved"]);
+assert.equal(lib.mats[0].engrave.source, "starting", "the rest is carried over as untested");
+assert.equal(await page.locator('#material optgroup[label="Your materials"] option').count(), 1);
+
+step("a material can be added, edited and deleted by hand");
+await page.getByRole("button", { name: "New material" }).click();
+await page.fill('dialog input[type="text"]', "Slate coaster");
+await page.fill('dialog input[aria-label="Engrave mm/min"]', "3000");
+await page.fill('dialog input[aria-label="Engrave %"]', "80");
+await page.click('dialog button[value="ok"]');
+await page.waitForFunction(() => window.__store.state.library.length === 2 && window.__store.state.library.some((m) => m.engrave?.speed === 3000));
+let slate = await store((s) => s.state.materials.find((m) => m.id === s.state.ui.materialId));
+assert.equal(slate.name, "Slate coaster");
+assert.deepEqual([slate.engrave.mode, slate.engrave.power, slate.engrave.passes, slate.engrave.interval, slate.engrave.source], ["fill", 80, 1, 0.1, "saved"]);
+assert.equal(slate.cut, null);
+await page.getByRole("button", { name: "Edit", exact: true }).click();
+await page.fill('dialog input[aria-label="Engrave %"]', "85");
+await page.fill("dialog textarea", "Dark grey, from the garden centre");
+await page.click('dialog button[value="ok"]');
+await page.waitForFunction(() => window.__store.state.library.some((m) => m.engrave?.power === 85 && m.notes.includes("garden centre")));
+await page.getByRole("button", { name: "New material" }).click();
+await page.fill('dialog input[type="text"]', "slate COASTER");
+await page.click('dialog button[value="ok"]');
+await page.waitForSelector(".toast.error");
+assert.match(await page.locator(".toast.error").last().textContent(), /already have a material called "Slate coaster"/);
+assert.equal(await store((s) => s.state.library.length), 2);
+await page.getByRole("button", { name: "Delete", exact: true }).click();
+await page.click('dialog button[value="delete"]');
+await page.waitForFunction(() => window.__store.state.library.length === 1 && window.__store.state.ui.materialId === "");
+
+step("the test card is laid out as asked");
+await page.selectOption("#material", plyId);
+await page.getByRole("button", { name: "Test grid" }).click();
+await page.waitForSelector(".test-preview");
+assert.equal(await page.locator(".test-cell").count(), 25, "5 speeds by 5 powers by default");
+const typeIn = async (label, value, nth = 0) => {
+  const input = page.getByLabel(label, { exact: true }).nth(nth);
+  await input.fill(String(value));
+  await input.press("Tab");
+};
+await typeIn("Speed from", 2000);
+await typeIn("to (mm/min)", 6000);
+await typeIn("Steps", 3, 0);
+await typeIn("Power from", 30);
+await typeIn("to (%)", 60);
+await typeIn("Steps", 2, 1);
+await typeIn("Line gap (mm)", 0.2);
+await typeIn("Square (mm)", 6);
+assert.equal(await page.locator(".test-cell").count(), 6);
+const card = await page.evaluate(async () => {
+  const grid = await import("/js/testgrid.js");
+  const { post } = await import("/js/api.js");
+  const job = await grid.buildTestJob(grid.gridSpec(grid.test, 6000, "Plywood"));
+  return {
+    origin: job.origin_mode,
+    layers: job.layers.map((l) => [l.name, l.mode, l.speed, l.power, l.interval]),
+    summary: await post("/api/job/preview", { job }),
+    gcode: await post("/api/job/gcode", { job }),
+  };
+});
+assert.equal(card.origin, "origin");
+assert.deepEqual(card.layers[0].slice(0, 2), ["Labels", "fill"]);
+assert.deepEqual(card.layers.slice(1).map((l) => [l[2], l[3]]), [[2000, 30], [4000, 30], [6000, 30], [2000, 60], [4000, 60], [6000, 60]]);
+assert.ok(card.layers.slice(1).every((l) => l[1] === "fill" && l[4] === 0.2));
+near(card.summary.bounds[0], 0, 0.11);
+near(card.summary.bounds[1], 0, 0.11);
+// 10 mm of row labels plus three 6 mm squares, and 13.5 mm of headings plus two rows (less the space above the title's capitals).
+assert.ok(card.summary.width >= 31.9 && card.summary.height > 26 && card.summary.height < 27.6, `card is ${card.summary.width} × ${card.summary.height}`);
+// Each square is burned at its own speed and power: 6 mm at 0.2 mm gap is 30 scan lines.
+const blocks = card.gcode.split("M4 S0").slice(2);
+assert.equal(blocks.length, 6);
+blocks.forEach((block, i) => {
+  const [speed, power] = [[2000, 30], [4000, 30], [6000, 30], [2000, 60], [4000, 60], [6000, 60]][i];
+  const burns = [...block.matchAll(/G1 X[\d.]+ S(\d+)/g)].filter((m) => Number(m[1]) > 0);
+  assert.equal(burns.length, 30, `square ${i} has 30 scan lines`);
+  assert.ok(burns.every((m) => Number(m[1]) === power * 10), `square ${i} burns at ${power}%`);
+  assert.ok(block.includes(`F${speed}`), `square ${i} runs at ${speed} mm/min`);
+});
+
+step("a score card burns from the origin, and the picked square is saved to the material");
+await page.getByRole("button", { name: "Score", exact: true }).click();
+assert.equal(await page.locator(".test-cell").count(), 25);
+assert.equal(await page.getByRole("button", { name: "Save as the score setting" }).isDisabled(), true, "nothing picked yet");
+await page.getByRole("button", { name: "Frame test" }).click();
+await waitStatus((s) => s.job.kind === "frame" && s.job.state === "running");
+await waitStatus((s) => s.job.kind === "frame" && s.job.state === "done");
+await page.getByRole("button", { name: "Burn test" }).click();
+await page.waitForSelector("dialog[open]");
+const confirmText = await page.textContent("dialog");
+assert.match(confirmText, /25 squares: 1000 to 5000 mm\/min, 10 to 50%/);
+assert.match(confirmText, /the card's front-left corner/);
+await page.click('dialog button[value="go"]');
+await waitStatus((s) => s.job.name === "Material test" && s.job.state === "running");
+assert.equal(await page.getByRole("button", { name: "Burn test" }).isDisabled(), true, "can't start a second run on top");
+await waitStatus((s) => s.job.name === "Material test" && s.job.state === "done");
+await page.locator('.test-cell[data-r="2"][data-c="1"]').click();
+assert.match(await page.textContent("#tab-design"), /Picked: 2000 mm\/min, 30%, 1 pass\./);
+await shot("08-test-grid");
+await page.getByRole("button", { name: "Save as the score setting" }).click();
+await page.waitForFunction(() => window.__store.state.library[0].score?.source === "test");
+const tested = await store((s) => s.state.library[0]);
+assert.deepEqual([tested.score.mode, tested.score.speed, tested.score.power, tested.score.passes], ["line", 2000, 30, 1]);
+assert.match(tested.score.date, /^\d{4}-\d{2}-\d{2}$/);
+assert.equal(tested.cut.speed, 300, "other settings are untouched");
+await page.getByRole("button", { name: "Back to layers" }).click();
+assert.match(await page.textContent(".settings-list"), /2000 mm\/min, 30%, 1 pass\s*picked from a test/);
+await page.locator(".layer").nth(1).locator('select[aria-label="Presets"]').selectOption("use:score");
+const scored = await store((s) => ({ ...s.state.doc.layers[1] }));
+assert.deepEqual([scored.speed, scored.power, scored.passes, scored.mode], [2000, 30, 1, "line"]);
+await shot("09-material");
+
 step("the assistant's reply changes the canvas and the layers");
 await page.route("**/api/state", async (route) => {
   const response = await route.fetch();
@@ -284,7 +405,9 @@ await page.fill("#tab-assistant textarea", "Make a star for a plywood coaster");
 await page.press("#tab-assistant textarea", "Enter");
 await page.waitForSelector(".msg.assistant:not(.thinking)");
 assert.equal(asked.messages.at(-1).content, "Make a star for a plywood coaster");
-assert.equal(asked.context.material, "Plywood (basswood/birch), 3 mm");
+assert.equal(asked.context.material.name, "Plywood (basswood/birch), 3 mm");
+assert.equal(asked.context.material.from, "the person's own materials");
+assert.equal(asked.context.material.score.source, "test");
 assert.ok(asked.image.startsWith("data:image/png"), "a picture of the canvas is sent");
 const star = await store((s) => {
   const o = s.state.doc.objects.at(-1);

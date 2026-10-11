@@ -24,7 +24,9 @@ function context() {
   const picked = selected();
   const one = picked.length === 1 ? picked[0] : null;
   return {
-    material: material ? material.name : null,
+    material: material
+      ? { name: material.name, from: material.mine ? "the person's own materials" : "generic starting points", notes: material.notes || undefined, engrave: material.engrave || null, score: material.score || null, cut: material.cut || null }
+      : null,
     start_from: state.ui.originMode === "origin" ? "origin (design's front-left corner goes to the origin)" : "bed position",
     layers: state.doc.layers.map((l) => ({
       id: l.id, name: l.name, mode: l.mode, speed: l.speed, power: l.power, passes: l.passes,

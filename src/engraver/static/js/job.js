@@ -106,10 +106,6 @@ async function rasterize(layer, objects) {
   }
   const w = x1 - x0, h = y1 - y0;
   if (w <= 0 || h <= 0) return null;
-  const perMm = 1 / layer.interval;
-  const pw = Math.max(1, Math.round(w * perMm)), ph = Math.max(1, Math.round(h * perMm));
-  if (pw * ph > MAX_PIXELS) throw new Error(`"${layer.name}" is too detailed to render. Use a larger line interval or a smaller design.`);
-
   const serializer = new XMLSerializer();
   const parts = objects.map((o) => {
     const clone = artNode(o.id).parentNode.cloneNode(true);
@@ -118,8 +114,18 @@ async function rasterize(layer, objects) {
     clone.removeAttribute("style");
     return serializer.serializeToString(clone);
   });
-  const markup = `<svg xmlns="http://www.w3.org/2000/svg" width="${pw}" height="${ph}" viewBox="${x0} ${y0} ${w} ${h}">${parts.join("")}</svg>`;
-  const url = URL.createObjectURL(new Blob([markup], { type: "image/svg+xml" }));
+  return rasterizeMarkup(parts.join(""), { x: x0, y: y0, w, h }, 1 / layer.interval, layer.name);
+}
+
+/**
+ * Render SVG markup (in bed mm) to a bitmap covering `box`, at `perMm` pixels per mm.
+ * White background: anything not drawn doesn't burn.
+ */
+export async function rasterizeMarkup(markup, box, perMm, name = "This layer") {
+  const pw = Math.max(1, Math.round(box.w * perMm)), ph = Math.max(1, Math.round(box.h * perMm));
+  if (pw * ph > MAX_PIXELS) throw new Error(`"${name}" is too detailed to render. Use a larger line interval or a smaller design.`);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${pw}" height="${ph}" viewBox="${box.x} ${box.y} ${box.w} ${box.h}">${markup}</svg>`;
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
   try {
     const img = await loadImage(url);
     const canvas = document.createElement("canvas");
@@ -129,7 +135,7 @@ async function rasterize(layer, objects) {
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, pw, ph);
     ctx.drawImage(img, 0, 0, pw, ph);
-    return { x: +x0.toFixed(3), y: +y0.toFixed(3), w: +w.toFixed(3), h: +h.toFixed(3), png: canvas.toDataURL("image/png") };
+    return { x: +box.x.toFixed(3), y: +box.y.toFixed(3), w: +box.w.toFixed(3), h: +box.h.toFixed(3), png: canvas.toDataURL("image/png") };
   } finally {
     URL.revokeObjectURL(url);
   }

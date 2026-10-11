@@ -42,9 +42,10 @@ Writing SVG for a laser
 - Think about the real object. Ask for the finished size if it matters and wasn't given, otherwise pick a sensible size for the item and say what you chose.
 
 Choosing settings
-- Starting points for this class of laser (speed mm/min, power %, passes):
+{library}- Generic starting points for this class of laser (speed mm/min, power %, passes):
 {materials}
-- Treat those as starting points. Give one concrete recommendation, apply it with set_layer, and say briefly what to adjust if the result is too light, too dark or doesn't cut through. Suggest a small test on scrap for anything that matters.
+- Treat the generic values as starting points. Give one concrete recommendation, apply it with set_layer, and say briefly what to adjust if the result is too light, too dark or doesn't cut through.
+- When a setting is a guess, say so and point to the app's test grid (Design tab, Material, Test grid): it burns squares across a range of speed and power on scrap, and the person picks the best one to save to their materials.
 - Cutting needs slow speed and full power, often several passes. Engraving needs high speed and moderate power.
 - If asked about a material on the never-laser list, say why it's unsafe and don't supply settings for it. Mention ventilation, eye protection or fire risk only where it is specifically relevant, in a sentence, not as boilerplate.
 
@@ -159,9 +160,18 @@ MAX_HISTORY = 24
 MAX_SVG_CONTEXT = 40_000
 
 
-def system_prompt(machine: MachineProfile) -> str:
+def system_prompt(machine: MachineProfile, library: str = "") -> str:
+    if library:
+        own = (
+            "- The person's own materials, saved from this machine. These take priority over the generic values below. "
+            "A setting picked from a test grid is known to work here: use it as it is unless the person wants a different result.\n"
+            f"{library}\n"
+        )
+    else:
+        own = "- The person hasn't saved any materials of their own yet.\n"
     return SYSTEM_PROMPT.format(
-        name=machine.name, bed_w=machine.bed_w, bed_h=machine.bed_h, max_feed=machine.max_feed, materials=as_prompt_table()
+        name=machine.name, bed_w=machine.bed_w, bed_h=machine.bed_h, max_feed=machine.max_feed,
+        materials=as_prompt_table(), library=own,
     )
 
 
@@ -173,8 +183,8 @@ def _context_text(context: dict) -> str:
     return "Current state of the app (for reference, not written by the person):\n" + json.dumps(ctx, separators=(",", ":"))
 
 
-def build_messages(machine: MachineProfile, history: list[dict], context: dict, image: str | None) -> list[dict]:
-    messages: list[dict] = [{"role": "system", "content": system_prompt(machine)}]
+def build_messages(machine: MachineProfile, history: list[dict], context: dict, image: str | None, library: str = "") -> list[dict]:
+    messages: list[dict] = [{"role": "system", "content": system_prompt(machine, library)}]
     turns = [m for m in history if m.get("role") in ("user", "assistant") and m.get("content")][-MAX_HISTORY:]
     if not turns or turns[-1]["role"] != "user":
         raise AssistantError("Type a message first.")
@@ -261,6 +271,7 @@ async def chat(
     context: dict,
     image: str | None = None,
     completion: Completion | None = None,
+    library: str = "",
 ) -> dict:
     if not settings.model:
         raise AssistantError("No model is set up yet. Add your provider details in Setup.")
@@ -277,7 +288,7 @@ async def chat(
         base["api_base"] = settings.api_base
 
     async def attempt(with_tools: bool, with_image: bool):
-        messages = build_messages(machine, history, context, use_image if with_image else None)
+        messages = build_messages(machine, history, context, use_image if with_image else None, library)
         kwargs = dict(base, messages=messages)
         if with_tools:
             kwargs.update(tools=TOOLS, tool_choice="auto")

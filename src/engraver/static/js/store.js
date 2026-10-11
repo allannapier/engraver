@@ -57,11 +57,19 @@ export const state = {
   status: { connected: false, state: "Disconnected", wpos: [0, 0], wco: [0, 0], settings: {}, job: null },
   config: { machine: {}, llm: {} },
   machine: { bed_w: 410, bed_h: 400, max_feed: 6000 },
-  materials: [],
+  materials: [], // what the Material box offers: the person's own first, then the built-in starting points
+  builtin: [],
+  library: [],
   never: [],
   ui: { materialId: "", originMode: "absolute", finish: "origin", frameDot: false, jogStep: 10, lockAspect: true },
   chat: [],
 };
+
+export function setMaterials({ builtin, library }) {
+  if (builtin) state.builtin = builtin;
+  if (library) state.library = library;
+  state.materials = [...state.library.map((m) => ({ ...m, mine: true })), ...state.builtin];
+}
 
 export const bed = () => ({ w: state.machine.bed_w || 410, h: state.machine.bed_h || 400 });
 export const layerById = (id) => state.doc.layers.find((layer) => layer.id === id);

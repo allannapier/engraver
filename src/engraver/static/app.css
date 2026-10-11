@@ -228,6 +228,24 @@ section + section { border-top: 1px solid var(--line); padding-top: 14px; }
 .composer { display: grid; gap: 8px; }
 .panel#tab-assistant { gap: 10px; }
 
+.settings-list { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0 0; font-size: 13px; }
+.settings-list dt { color: var(--muted); }
+.settings-list dd { margin: 0; font-family: var(--num); font-size: 12.5px; }
+.source { display: block; font-family: var(--ui); font-size: 12px; color: var(--muted); }
+.source.test { color: var(--ok); }
+.setting-row { display: grid; grid-template-columns: 62px repeat(4, minmax(0, 1fr)); gap: 6px; align-items: center; margin-top: 6px; color: var(--text); }
+.setting-row input { height: 30px; width: 100%; }
+dialog .field > input[type="text"], dialog .field > textarea { width: 100%; color: var(--text); }
+dialog .field { color: var(--muted); }
+
+.test-preview-wrap { background: #1a1d22; border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; margin-bottom: 8px; }
+.test-preview { display: block; width: 100%; max-height: 300px; }
+.test-cell { cursor: pointer; outline: none; }
+.test-cell:hover, .test-cell:focus-visible { stroke: var(--diode-strong); stroke-opacity: 1; stroke-width: 0.6; }
+.test-cell.chosen { stroke: var(--diode-strong); stroke-opacity: 1; stroke-width: 1.1; }
+.back { padding-left: 0; }
+.back::before { content: "‹ "; }
+
 /* --- job bar ---------------------------------------------------------------- */
 
 .jobbar { display: flex; align-items: center; gap: 18px; padding: 0 14px; border-top: 1px solid #1b1f25; background: var(--chrome); }
@@ -243,7 +261,8 @@ section + section { border-top: 1px solid var(--line); padding-top: 14px; }
 
 /* --- overlays --------------------------------------------------------------- */
 
-.toasts { position: fixed; right: 16px; bottom: 82px; display: flex; flex-direction: column; gap: 8px; z-index: 20; max-width: 380px; }
+/* Over the canvas, not the side panel, so a message never covers the control that caused it. */
+.toasts { position: fixed; left: 62px; bottom: 82px; display: flex; flex-direction: column; gap: 8px; z-index: 20; max-width: 380px; }
 .toast { padding: 10px 14px; background: var(--raised); border: 1px solid var(--line); border-left: 3px solid var(--diode); border-radius: var(--radius); box-shadow: 0 6px 20px rgb(0 0 0 / .35); }
 .toast.error { border-left-color: var(--danger); }
 .toast.warn { border-left-color: var(--warn); }

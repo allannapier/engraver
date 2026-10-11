@@ -3,7 +3,8 @@
 A local browser app for designing and running jobs on an Atomstack A10 (or any GRBL diode laser). A small Python server talks to the laser over USB; the app runs in your browser at `127.0.0.1`.
 
 - **Canvas**: import SVGs and pictures, add text and shapes, then move, scale and rotate them on a to-scale bed.
-- **Layers**: speed, power, passes and mode (line or fill) per layer, with starting presets per material.
+- **Layers**: speed, power, passes and mode (line or fill) per layer.
+- **Materials**: burn a test card on scrap, pick the best square, and keep the result in your own material library.
 - **Laser control**: connect, jog, set and go to origin, frame, start, pause, resume, stop.
 - **Assistant**: add your LLM provider and it can draw designs, rework the selected one, and recommend settings.
 - **Simulator**: a built-in fake laser, so everything can be tried without the machine.
@@ -45,6 +46,22 @@ That starts the server on port 8642 and opens the app. `--port N` changes the po
 | Shift while resizing | toggle keep-proportions |
 | Shift while rotating | snap to 15° |
 
+## Finding settings for a material
+
+The built-in materials are generic starting points. To get settings for your machine and your stock:
+
+1. In the **Design** tab, pick the closest material (or **New material**) and press **Test grid**.
+2. Choose what you're testing for:
+   - **Engrave**: filled squares across a range of speed and power.
+   - **Score**: outlined squares across speed and power.
+   - **Cut**: outlined squares across speed and number of passes at fixed power. The ones that drop out are cut through.
+3. Jog to a piece of scrap, **Set origin here** in the Laser tab, then **Frame test** and **Burn test**. The card's front-left corner lands on the origin, and the values are engraved on it so you can keep it.
+4. Click the square that came out best and **Save**. It's stored under that material as "picked from a test".
+
+After that, a layer's **Presets** menu applies the saved engrave, score or cut setting, and can save a layer's current settings back to the material. **Edit** lets you type settings in by hand. The assistant is given your library and prefers it over the generic table.
+
+Your materials live in `~/.engraver/materials.json`, next to the settings file.
+
 ## The assistant
 
 In **Setup**, enter a model in LiteLLM form (`provider/model`, for example `anthropic/claude-sonnet-5-5` or `ollama/your-local-model`), an API key, and a base URL if the model is local or self-hosted. **Save and test** checks it.
@@ -65,7 +82,7 @@ Settings live in `~/.engraver/config.json` (override with `ENGRAVER_CONFIG`). Th
 - Jobs are refused if laser mode is off (`$32=0`); send `$32=1` from the console in the Laser tab.
 - Everything runs in `M4` dynamic power, so the beam is off during travel moves and scales down in corners.
 - The origin is stored with `G10 L20` (GRBL's G54 offset), so it survives a stop and a power cycle. The Laser tab shows when one is active and lets you clear it.
-- The material presets are starting points for a 10 W diode, not measured values for your machine. Test on scrap.
+- The built-in material values are starting points for a 10 W diode, not measured on your machine. Use the test grid to replace them with your own.
 
 ## Safety
 
@@ -82,7 +99,8 @@ src/engraver/
   grbl/controller.py  serial streaming, status, pause/stop, origin
   grbl/simulator.py   in-process fake GRBL used by "Simulator" and the tests
   gcode.py          job description -> G-code (vector, raster, frame)
-  materials.py      preset table and never-laser list
+  materials.py      generic starting-point table and never-laser list
+  library.py        your own materials (saved and tested settings)
   llm.py            assistant prompt, tools, LiteLLM call
   config.py         saved settings
   static/           the browser app (plain ES modules, no build step)
@@ -107,5 +125,4 @@ node tests/e2e/smoke.mjs
 
 - Text can't be traced as outlines on a line layer (it engraves fine on a fill layer).
 - No node editing, boolean operations or image tracing.
-- No material test-grid generator.
-- Tested against the simulator only, not yet against a real A10.
+- The material test card is new and has only been burned on the simulator so far.
