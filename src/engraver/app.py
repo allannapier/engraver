@@ -236,7 +236,7 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
     @app.get("/api/ports")
     def ports(all: bool = False):
         found, hidden = list_ports(show_all=all)
-        return {"ports": found + [{"device": SIM_PORT, "description": "Simulator (no laser needed)", "usb": False}], "hidden": hidden}
+        return {"ports": [*found, {"device": SIM_PORT, "description": "Simulator (no laser needed)", "usb": False}], "hidden": hidden}
 
     @app.post("/api/connect")
     def connect(body: ConnectBody):

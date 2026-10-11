@@ -44,7 +44,7 @@ def test_parse_status():
 
 
 def test_connect_reads_machine_settings(rig):
-    ctl, sim, _ = rig
+    ctl, _sim, _ = rig
     assert ctl.version.startswith("Grbl 1.1")
     assert ctl.settings[30] == 1000 and ctl.settings[32] == 1
     assert ctl.snapshot()["state"] == "Idle"
@@ -110,7 +110,7 @@ def test_stop_halts_the_laser_and_keeps_position(rig):
 
 
 def test_error_on_a_job_line_stops_the_job(rig):
-    ctl, sim, events = rig
+    ctl, sim, _events = rig
     sim.speed = 2
     ctl.start(["G21", "G90", "M4 S0", "G1 X50 S400 F600", "G99", "G1 X80"])
     wait_for(lambda: ctl.job.state == "error", message="job error")

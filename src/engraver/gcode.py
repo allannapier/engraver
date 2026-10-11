@@ -207,7 +207,7 @@ def simplify(points: list[Point], tolerance: float = 0.02) -> list[Point]:
             keep[index] = True
             stack.append((first, index))
             stack.append((index, last))
-    return [pt for pt, kept in zip(points, keep) if kept]
+    return [pt for pt, kept in zip(points, keep, strict=False) if kept]
 
 
 def order_paths(paths: list[list[Point]], start: Point) -> list[list[Point]]:
@@ -297,7 +297,7 @@ def _raster_gcode(out: _Writer, layer: Layer, power: np.ndarray, machine: Machin
             edges = np.flatnonzero(np.diff(span)) + 1
             starts = np.concatenate(([0], edges)) + first
             ends = np.concatenate((edges, [span.size])) + first
-            runs = [(int(a), int(b), int(line[a])) for a, b in zip(starts, ends)]
+            runs = [(int(a), int(b), int(line[a])) for a, b in zip(starts, ends, strict=False)]
             x_first, x_last = left + first * px, left + last * px
             bounds.add(x_first, y - py / 2)
             bounds.add(x_last, y + py / 2)

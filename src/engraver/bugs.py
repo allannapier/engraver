@@ -283,7 +283,7 @@ def compose(draft: BugDraft, env: dict, secrets: tuple[str, ...] = ()) -> str:
     kept: list[tuple[int, str]] = []
     dropped = 0
     # Fill by priority, but keep the original order in the finished report.
-    for index, (text, priority) in sorted(enumerate(sections), key=lambda item: item[1][1]):
+    for index, (text, _priority) in sorted(enumerate(sections), key=lambda item: item[1][1]):
         text = scrub(text, secrets)
         if len(text) + 2 <= budget:
             kept.append((index, text))

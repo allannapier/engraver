@@ -16,8 +16,8 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 from . import protocol as p
 
@@ -218,7 +218,7 @@ class GrblController:
               line_seconds: list[float] | None = None) -> None:
         cleaned = [line.split(";")[0].strip() for line in lines]
         if line_seconds is not None and len(line_seconds) == len(lines):
-            line_seconds = [mark for mark, text in zip(line_seconds, cleaned) if text]
+            line_seconds = [mark for mark, text in zip(line_seconds, cleaned, strict=False) if text]
         else:
             line_seconds = None
         lines = [text for text in cleaned if text]
