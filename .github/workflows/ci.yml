@@ -111,11 +111,13 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - name: Build
         run: uv build
-      - name: Wheel carries the frontend
+      - name: Wheel carries the frontend and the license
         run: |
           unzip -l dist/*.whl | tee wheel.txt
           grep -q "engraver/static/index.html" wheel.txt
           grep -q "engraver/static/js/main.js" wheel.txt
+          grep -q "dist-info/licenses/LICENSE" wheel.txt
+          tar -tzf dist/*.tar.gz | grep -q "/LICENSE$"
       - name: Installed wheel starts
         run: uvx --from dist/*.whl engraver --help
 

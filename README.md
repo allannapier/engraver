@@ -1,6 +1,7 @@
 # Engraver
 
 [![CI](https://github.com/allannapier/engraver/actions/workflows/ci.yml/badge.svg)](https://github.com/allannapier/engraver/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A local browser app for designing and running jobs on an Atomstack A10 (or any GRBL diode laser). A small Python server talks to the laser over USB; the app runs in your browser at `127.0.0.1`.
 
@@ -114,6 +115,8 @@ A 10 W diode laser blinds and starts fires. Wear goggles rated for 455 nm, venti
 
 The server only listens on `127.0.0.1` and rejects requests that don't come from its own page, so other websites can't reach it.
 
+You run this software at your own risk. It comes with no warranty, the built-in settings are untested starting points, and nothing in it replaces watching the machine. See the [license](LICENSE).
+
 ## How it's built
 
 ```
@@ -157,3 +160,11 @@ CI (`.github/workflows/ci.yml`) runs all of this on every pull request and on `m
 - Text can't be traced as outlines on a line layer (it engraves fine on a fill layer).
 - No node editing, boolean operations or image tracing.
 - The material test card is new and has only been burned on the simulator so far.
+
+## Contributing
+
+Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up, test and what a change must keep intact, and [SECURITY.md](SECURITY.md) for reporting a vulnerability privately. Everyone taking part is expected to follow the [code of conduct](CODE_OF_CONDUCT.md).
+
+## License
+
+[MIT](LICENSE) © 2026 Allan Napier. Free to use, change and share, including commercially, as long as the copyright and license notice stay with it. The software is provided "as is", without warranty of any kind, and the author is not liable for any damage or injury arising from its use.
