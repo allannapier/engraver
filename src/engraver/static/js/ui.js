@@ -1,5 +1,7 @@
 // Small DOM helpers shared by the panels: element builder, icons, toasts, dialogs.
 
+import { noteEvent } from "./diagnostics.js";
+
 export function h(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs || {})) {
@@ -64,6 +66,7 @@ export function toast(text, kind = "info") {
   // The same message twice in a row (a held key, a repeating error) shows once.
   if (text === lastToast.text && Date.now() - lastToast.at < 3000) return;
   lastToast = { text, at: Date.now() };
+  noteEvent(`shown (${kind}): ${text}`);
   const node = h("div", { class: `toast ${kind}`, role: kind === "error" ? "alert" : "status" }, text);
   toasts.append(node);
   while (toasts.children.length > 4) toasts.firstChild.remove();
@@ -76,11 +79,12 @@ const dialog = document.getElementById("dialog");
  * Show a modal. `build(form)` fills it in; buttons with a `value` close it.
  * Resolves with the value of the button used, or null if dismissed.
  */
-export function modal(build) {
+export function modal(build, { wide = false } = {}) {
   return new Promise((resolve) => {
     const form = h("form", { method: "dialog" });
     build(form);
     dialog.replaceChildren(form);
+    dialog.classList.toggle("wide", wide);
     dialog.returnValue = "";
     dialog.addEventListener("close", () => resolve(dialog.returnValue || null), { once: true });
     dialog.showModal();

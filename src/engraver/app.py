@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,7 +20,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import __version__, llm
+from . import __version__, bugs, llm
 from .config import ConfigStore
 from .gcode import JobError, JobSpec, MachineProfile, build_job, frame_gcode
 from .grbl.controller import GrblController, MachineError, list_ports
@@ -131,6 +132,8 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
     app.state.store = store
     app.state.hub = hub
     app.state.library = library
+    app.state.github = bugs.GitHub(lambda: store.settings.bugs.token)  # tests swap in a fake
+    app.state.last_job = None
     app.state.completion = None  # tests swap in a fake provider here
 
     @app.middleware("http")
@@ -149,6 +152,16 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
     @app.exception_handler(JobError)
     async def job_error(request: Request, exc: JobError):
         return JSONResponse({"detail": str(exc)}, status_code=422)
+
+    @app.exception_handler(bugs.BugError)
+    async def bug_error(request: Request, exc: bugs.BugError):
+        return JSONResponse({"detail": str(exc)}, status_code=502)
+
+    @app.exception_handler(Exception)
+    async def unexpected(request: Request, exc: Exception):
+        # Kept for bug reports: the traceback is what someone fixing it needs most.
+        bugs.log.error("%s %s failed", request.method, request.url.path, exc_info=exc)
+        return JSONResponse({"detail": "Engraver hit an internal error. Use Report a bug to send the details."}, status_code=500)
 
     @app.exception_handler(LibraryError)
     async def library_error(request: Request, exc: LibraryError):
@@ -283,6 +296,7 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
     def job_start(body: JobBody):
         require_laser_mode()
         result = build_job(body.job, machine())
+        app.state.last_job = bugs.describe_job(body.job, result, "job")
         controller.start(result.lines, name=body.job.name, kind="job", est_seconds=result.est_seconds, line_seconds=result.line_seconds)
         return result.summary()
 
@@ -291,6 +305,7 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
         profile = machine()
         result = build_job(body.job, profile)
         lines = frame_gcode(result.bounds, profile, dot_power=body.dot_power, finish=body.job.finish)
+        app.state.last_job = {**bugs.describe_job(body.job, result, "frame"), "frame_gcode": lines}
         b = result.bounds
         perimeter = 2 * ((b.max_x - b.min_x) + (b.max_y - b.min_y))
         controller.start(lines, name="Frame", kind="frame", est_seconds=perimeter / profile.frame_feed * 60)
@@ -324,6 +339,44 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
     async def ai_test():
         reply = await llm.test_connection(store.settings.llm, completion=app.state.completion)
         return {"ok": True, "reply": reply}
+
+    # --- bug reports -----------------------------------------------------------
+
+    def secrets() -> tuple[str, ...]:
+        return (store.settings.llm.api_key, store.settings.bugs.token, os.environ.get("GITHUB_TOKEN", ""), os.environ.get("GH_TOKEN", ""))
+
+    @app.get("/api/bug/status")
+    def bug_status():
+        repo = store.settings.bugs.repo
+        github = app.state.github
+        return {"repo": repo, "method": github.method(), "public": github.is_public(repo)}
+
+    @app.post("/api/bug/preview")
+    def bug_preview(draft: bugs.BugDraft):
+        """Compose the report. Nothing is sent: the person reviews this text first."""
+        settings = store.settings
+        env = {
+            "app": bugs.app_info(),
+            "status": controller.snapshot(),
+            "machine": machine().model_dump(),
+            "llm": {"model": settings.llm.model, "key_set": bool(settings.llm.api_key), "api_base": settings.llm.api_base, "vision": settings.llm.vision},
+            "console": [
+                f"{time.strftime('%H:%M:%S', time.localtime(e.get('t', 0)))} {'> ' if e.get('kind') == 'tx' else ''}{e.get('text', '')}"
+                + (" [error]" if e.get("kind") == "error" else "")
+                for e in hub.log
+            ],
+            "server_log": list(bugs.SERVER_LOG.records),
+            "last_job": app.state.last_job,
+            "library": library.all(),
+        }
+        return {"title": bugs.scrub(draft.title.strip(), secrets()), "body": bugs.compose(draft, env, secrets())}
+
+    @app.post("/api/bug/report")
+    def bug_report(report: bugs.BugSubmit):
+        """File the reviewed text as an issue. Scrubbed again in case a secret was pasted in."""
+        title = bugs.scrub(report.title.strip(), secrets())
+        body = bugs.scrub(report.body, secrets())
+        return app.state.github.create(store.settings.bugs.repo, title, body)
 
     # --- live updates --------------------------------------------------------
 

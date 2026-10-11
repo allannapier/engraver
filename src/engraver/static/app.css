@@ -268,6 +268,10 @@ dialog .field { color: var(--muted); }
 .toast.warn { border-left-color: var(--warn); }
 
 dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 0; width: min(440px, calc(100vw - 32px)); }
+dialog.wide { width: min(720px, calc(100vw - 32px)); }
+dialog .report-body { width: 100%; height: min(52vh, 520px); font: 12px/1.5 var(--num); color: var(--text); white-space: pre-wrap; overflow: auto; resize: vertical; }
+dialog a { color: var(--diode); word-break: break-all; }
+.btn.linklike { display: inline-grid; place-items: center; text-decoration: none; color: var(--text); }
 dialog::backdrop { background: rgb(10 12 15 / .6); }
 dialog form { display: grid; gap: 14px; padding: 20px; }
 dialog h1 { font-size: 18px; margin: 0; }

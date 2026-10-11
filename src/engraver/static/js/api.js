@@ -1,5 +1,7 @@
 // Calls to the local server, plus the live event stream.
 
+import { noteEvent } from "./diagnostics.js";
+
 export async function api(path, { method = "GET", body } = {}) {
   let res;
   try {
@@ -9,6 +11,7 @@ export async function api(path, { method = "GET", body } = {}) {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
+    noteEvent(`${method} ${path} -> no answer from the server`);
     throw new Error("Can't reach Engraver's server. Is it still running in the terminal?");
   }
   if (!res.ok) {
@@ -22,7 +25,9 @@ export async function api(path, { method = "GET", body } = {}) {
       const first = detail[0] || {};
       detail = `${(first.loc || []).slice(-1)[0] || "Value"}: ${first.msg || "not valid"}`;
     }
-    throw new Error(typeof detail === "string" ? detail : `Request failed (${res.status})`);
+    const message = typeof detail === "string" ? detail : `Request failed (${res.status})`;
+    noteEvent(`${method} ${path} -> ${res.status}: ${message}`);
+    throw new Error(message);
   }
   const type = res.headers.get("content-type") || "";
   return type.includes("json") ? res.json() : res.text();

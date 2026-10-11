@@ -1,6 +1,7 @@
 // Entry point: loads state from the server, wires the top bar, toolbar,
 // property bar, job bar and keyboard, and starts the panels.
 
+import { installDiagnostics } from "./diagnostics.js";
 import { state, on, emit, bed, commit, undo, redo, canUndo, canRedo, select, selected, layerById, loadDoc, storedProject, serialize, uid, setMaterials } from "./store.js";
 import { api, post, connectEvents } from "./api.js";
 import { h, icon, toast, modal, formatDuration, act, download } from "./ui.js";
@@ -12,6 +13,9 @@ import { initDesign } from "./design.js";
 import { initLaser, addLog } from "./laser.js";
 import { initSetup } from "./setup.js";
 import { initAssistant } from "./assistant.js";
+import { initBugReport } from "./bugreport.js";
+
+installDiagnostics(); // before anything else runs, so start-up errors are caught too
 
 const $ = (id) => document.getElementById(id);
 const jobActive = () => ["running", "paused", "stopping"].includes(state.status.job?.state);
@@ -460,6 +464,7 @@ async function boot() {
   initLaser();
   initSetup();
   initAssistant();
+  initBugReport();
   emit("config");
   emit("status");
   refreshPorts().catch(() => {});

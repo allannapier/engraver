@@ -19,6 +19,9 @@ Local browser app that drives a GRBL diode laser (Atomstack A10). Python/FastAPI
 - Frame's visible dot is capped at 2 % in `gcode.frame_gcode`.
 - The built-in table in `materials.py` is never modified at runtime. Saving against a built-in material copies it into the person's library (`library.py`, ids start with `my-`).
 - The assistant reads the material library but has no tool to write to it: entries are things the person saved or picked from a burned test.
+- A bug report is only filed after the person has seen its full text (`bugreport.js` review step). The server files exactly the text it is given, after `bugs.scrub`. The assistant has no tool to file one.
+- Anything new that goes into a bug report passes through `bugs.scrub`, and typed text is never captured by `diagnostics.js`.
+- Tests must never create a real issue: replace `app.state.github` in pytest, and route `/api/bug/report` in the browser test. `ENGRAVER_BUG_DRY_RUN=1` forces the link fallback.
 
 ## Conventions
 

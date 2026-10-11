@@ -465,6 +465,77 @@ await page.locator("#stage").focus();
 await page.keyboard.press("Control+z");
 assert.equal(await store((s) => s.state.doc.objects[0].kind), "shape", "opening a project is undoable");
 
+step("a bug report gathers diagnostics, is reviewed, then filed");
+// Filing is always faked here: this test must never create a real issue.
+await page.route("**/api/bug/status", (route) => route.fulfill({ json: { repo: "allannapier/engraver", method: "gh", public: true } }));
+let filed;
+await page.route("**/api/bug/report", async (route) => {
+  filed = route.request().postDataJSON();
+  await route.fulfill({ json: { url: "https://github.com/allannapier/engraver/issues/7", number: 7, via: "gh" } });
+});
+await page.evaluate(async () => {
+  window.dispatchEvent(new ErrorEvent("error", { message: "TypeError: test boom", filename: `${location.origin}/js/stage.js`, lineno: 42, colno: 7 }));
+  const { post } = await import("/js/api.js");
+  await post("/api/job/preview", { job: { layers: [] } }).catch(() => {});
+});
+await page.click("#report-bug");
+await page.waitForSelector("dialog[open]");
+assert.match(await page.textContent("dialog"), /public, so anyone can read the report/);
+await page.click('dialog button[value="review"]');
+assert.equal(await page.textContent("dialog h1"), "Report a bug", "an empty report can't be sent on");
+await page.fill('dialog input[type="text"]', "Frame goes off the bed");
+await page.locator("dialog textarea").first().fill("Pressed Frame and the head hit the rail.");
+await page.click('dialog button[value="review"]');
+await page.waitForSelector("dialog .report-body");
+const reportText = await page.inputValue("dialog .report-body");
+for (const expected of [
+  "## What happened\n\nPressed Frame and the head hit the rail.",
+  "- Laser: connected on the simulator (Grbl 1.1h), state Idle",
+  "TypeError: test boom at /js/stage.js:42:7",
+  "POST /api/job/preview -> 422: Nothing to burn",
+  "click: Report a bug",
+  "Laser console",
+  '"kind": "job"',
+  "Layers and designs on the canvas",
+]) assert.ok(reportText.includes(expected), `report should include: ${expected}`);
+assert.ok(!reportText.includes("Assistant conversation"), "the conversation is left out unless ticked");
+await shot("10-bug-review");
+await page.click('dialog button[value="back"]');
+assert.equal(await page.inputValue('dialog input[type="text"]'), "Frame goes off the bed", "going back keeps what was typed");
+await page.click('dialog button[value="review"]');
+await page.waitForSelector("dialog .report-body");
+await page.fill("dialog .report-body", "## What happened\n\nTrimmed by hand.");
+await page.click('dialog button[value="send"]');
+await page.waitForFunction(() => document.querySelector("dialog h1")?.textContent === "Issue #7 created");
+assert.deepEqual(filed, { title: "Frame goes off the bed", body: "## What happened\n\nTrimmed by hand." }, "exactly the reviewed text is sent");
+assert.equal(await page.getAttribute("dialog a", "href"), "https://github.com/allannapier/engraver/issues/7");
+await page.click('dialog button[value=""]');
+
+step("without a GitHub sign-in it opens a pre-filled issue page instead");
+await page.unroute("**/api/bug/status");
+await page.unroute("**/api/bug/report");
+await page.evaluate(() => {
+  window.open = (url) => {
+    window.__opened = url;
+    return null;
+  };
+});
+await page.click("#report-bug");
+await page.waitForSelector("dialog[open]");
+assert.match(await page.textContent("dialog"), /opens a pre-filled issue page/);
+assert.equal(await page.inputValue('dialog input[type="text"]'), "", "the form starts clean after a report is filed");
+await page.fill('dialog input[type="text"]', "Second problem");
+await page.locator("dialog textarea").first().fill("Something else went wrong.");
+await page.click('dialog button[value="review"]');
+await page.waitForSelector("dialog .report-body");
+assert.equal(await page.textContent('dialog button[value="send"]'), "Open issue page");
+await page.click('dialog button[value="send"]');
+await page.waitForFunction(() => document.querySelector("dialog h1")?.textContent === "Finish on GitHub");
+const issuePage = await page.evaluate(() => window.__opened);
+assert.ok(issuePage.startsWith("https://github.com/allannapier/engraver/issues/new?title=Second+problem&body="), issuePage.slice(0, 120));
+assert.ok(issuePage.length < 8000);
+await page.locator('dialog button[value=""]').click();
+
 step("the project survives a reload");
 await page.reload();
 await ready();
