@@ -290,6 +290,16 @@ def test_gh_filing_passes_the_body_on_stdin(monkeypatch):
     assert creates[1][1] == "Body `text`"  # never interpolated into a shell command
 
 
+def test_gh_sign_in_is_checked_on_a_machine_that_just_booted(monkeypatch):
+    # time.monotonic() starts near zero at boot, so "never checked" can't be written as 0.
+    monkeypatch.setattr(bugs.shutil, "which", lambda name: "/usr/bin/gh")
+    monkeypatch.setattr(bugs.subprocess, "run", lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, "", ""))
+    monkeypatch.setattr(bugs.time, "monotonic", lambda: 12.0)
+    for name in ("GITHUB_TOKEN", "GH_TOKEN", "ENGRAVER_BUG_DRY_RUN"):
+        monkeypatch.delenv(name, raising=False)
+    assert bugs.GitHub(lambda: "").method() == "gh"
+
+
 def test_without_a_sign_in_it_falls_back_to_a_prefilled_link(monkeypatch):
     monkeypatch.setattr(bugs.shutil, "which", lambda name: None)
     for name in ("GITHUB_TOKEN", "GH_TOKEN", "ENGRAVER_BUG_DRY_RUN"):

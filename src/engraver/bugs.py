@@ -350,7 +350,8 @@ class GitHub:
 
     def __init__(self, token_getter):
         self._token_getter = token_getter
-        self._gh_checked = 0.0
+        # Not 0.0: time.monotonic() counts from boot on Linux, so a low number isn't "long ago".
+        self._gh_checked = float("-inf")
         self._gh_ok = False
         self._visibility: dict[str, tuple[float, bool | None]] = {}
 
