@@ -21,8 +21,17 @@ def main() -> None:
     if not args.no_browser:
         threading.Timer(1.0, webbrowser.open, args=(url,)).start()
     print(f"Engraver is running at {url}  (Ctrl+C to quit)")
-    # Loopback only: this server can move a laser, so it never listens on the network.
-    uvicorn.run(create_app(), host="127.0.0.1", port=args.port, log_level="warning")
+    app = create_app()
+    try:
+        # Loopback only: this server can move a laser, so it never listens on the network.
+        # The shutdown timeout stops an open browser tab from holding the server up on Ctrl+C.
+        uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning", timeout_graceful_shutdown=2)
+    finally:
+        # Whatever way the server ends, don't leave a job running with nothing in control.
+        controller = app.state.controller
+        controller.disconnect()
+        if controller.job and controller.job.error == "Disconnected while running":
+            print(f"Stopped {controller.job.name.lower()} and turned the laser off before quitting.")
 
 
 if __name__ == "__main__":

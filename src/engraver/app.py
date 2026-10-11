@@ -100,6 +100,14 @@ def _host_ok(headers, allowed: set[str]) -> bool:
     return origin != "null"
 
 
+async def _until_closed(socket: WebSocket) -> None:
+    try:
+        while True:
+            await socket.receive_text()  # the page never sends; this returns only on close
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+
+
 def create_app(store: ConfigStore | None = None, sim_speed: float | None = None, extra_hosts: tuple[str, ...] = ()) -> FastAPI:
     store = store or ConfigStore()
     hub = Hub()
@@ -303,13 +311,22 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
         await socket.accept()
         client: asyncio.Queue = asyncio.Queue(maxsize=400)
         hub.clients.add(client)
+        # Watch for the tab closing while waiting for events; otherwise this handler
+        # would sit on the queue forever and keep the server from shutting down.
+        closed = asyncio.ensure_future(_until_closed(socket))
         try:
             await socket.send_json({"type": "status", "status": controller.snapshot()})
             while True:
-                await socket.send_json(await client.get())
+                waiting = asyncio.ensure_future(client.get())
+                await asyncio.wait({waiting, closed}, return_when=asyncio.FIRST_COMPLETED)
+                if closed.done():
+                    waiting.cancel()
+                    break
+                await socket.send_json(waiting.result())
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
+            closed.cancel()
             hub.clients.discard(client)
 
     app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
