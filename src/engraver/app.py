@@ -252,7 +252,7 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
     def job_start(body: JobBody):
         require_laser_mode()
         result = build_job(body.job, machine())
-        controller.start(result.lines, name=body.job.name, kind="job", est_seconds=result.est_seconds)
+        controller.start(result.lines, name=body.job.name, kind="job", est_seconds=result.est_seconds, line_seconds=result.line_seconds)
         return result.summary()
 
     @app.post("/api/job/frame")

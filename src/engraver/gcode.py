@@ -99,6 +99,9 @@ class GcodeResult:
     burn_mm: float
     travel_mm: float
     warnings: list[str] = field(default_factory=list)
+    # Estimated seconds elapsed once each line has run: lets progress follow time,
+    # not line count (a raster is thousands of quick lines, a cut is a few slow ones).
+    line_seconds: list[float] = field(default_factory=list)
 
     def summary(self) -> dict:
         return {
@@ -124,6 +127,7 @@ class _Writer:
     def __init__(self, machine: MachineProfile):
         self.machine = machine
         self.lines: list[str] = []
+        self.marks: list[float] = []
         self.pos: Point | None = None
         self.burn_mm = 0.0
         self.travel_mm = 0.0
@@ -133,6 +137,7 @@ class _Writer:
 
     def raw(self, line: str) -> None:
         self.lines.append(line)
+        self.marks.append(self.seconds)
 
     def _dist(self, x: float, y: float) -> float:
         if self.pos is None:
@@ -145,7 +150,7 @@ class _Writer:
         dist = self._dist(x, y)
         self.travel_mm += dist
         self.seconds += dist / self.machine.travel_feed * 60
-        self.lines.append(f"G0 X{fmt(x)} Y{fmt(y)}")
+        self.raw(f"G0 X{fmt(x)} Y{fmt(y)}")
         self.pos = (x, y)
         self._s = None  # restate S on the next burn so each cut is self-contained
 
@@ -169,7 +174,7 @@ class _Writer:
         if feed != self._f:
             parts.append(f"F{fmt(feed)}")
             self._f = feed
-        self.lines.append(" ".join(parts))
+        self.raw(" ".join(parts))
         self.pos = (x, y)
 
 
@@ -429,6 +434,7 @@ def build_job(job: JobSpec, machine: MachineProfile) -> GcodeResult:
         burn_mm=out.burn_mm,
         travel_mm=out.travel_mm,
         warnings=warnings,
+        line_seconds=out.marks,
     )
 
 

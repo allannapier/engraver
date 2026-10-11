@@ -191,3 +191,17 @@ def test_connect_to_a_silent_port_fails_cleanly():
     wait_for(lambda: any(e["type"] == "log" and e["kind"] == "error" for e in events), timeout=10, message="error")
     wait_for(lambda: ctl.state == "Disconnected", message="closed")
     assert not ctl.connected and silent.closed
+
+
+def test_progress_follows_estimated_time(rig):
+    ctl, sim, _ = rig
+    sim.speed = 3
+    lines = ["G21", "G90", "M4 S0", "G0 X0 Y0", "G1 X1 S100 F6000", "G1 X2", "G1 X3", "G1 X4", "G4 P0", "G1 X80 F600", "M5"]
+    marks = [0, 0, 0, 0, 0.01, 0.02, 0.03, 0.04, 0.04, 7.64, 7.64]
+    ctl.start(lines, line_seconds=marks)
+    # G4 waits for the short moves to finish, so the slow move isn't acknowledged yet.
+    wait_for(lambda: ctl.job.acked == 8, message="short moves acknowledged")
+    assert ctl.job.public()["progress"] < 0.05  # 8 of 11 lines, but almost none of the time
+    sim.speed = 300
+    wait_for(lambda: ctl.job.state == "done", message="done")
+    assert ctl.job.public()["progress"] == 1.0

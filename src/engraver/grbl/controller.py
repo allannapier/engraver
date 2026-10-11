@@ -39,10 +39,22 @@ class Job:
     ended: float | None = None
     error: str | None = None
     idle_reports: int = 0
+    line_seconds: list[float] | None = None  # estimated time at the end of each line
+
+    def progress(self) -> float:
+        if self.state == "done":
+            return 1.0
+        if not self.lines or not self.acked:
+            return 0.0
+        marks = self.line_seconds
+        if marks and marks[-1] > 0:
+            return min(1.0, marks[min(self.acked, len(marks)) - 1] / marks[-1])
+        return self.acked / len(self.lines)
 
     def public(self) -> dict:
         end = self.ended or time.time()
         return {
+            "progress": round(self.progress(), 4),
             "name": self.name,
             "kind": self.kind,
             "state": self.state,
@@ -193,8 +205,14 @@ class GrblController:
             self._manual.append("M5")
             self._manual.append("G90 G0 X0 Y0")
 
-    def start(self, lines: list[str], name: str = "Job", kind: str = "job", est_seconds: float = 0.0) -> None:
-        lines = [text for text in (line.split(";")[0].strip() for line in lines) if text]
+    def start(self, lines: list[str], name: str = "Job", kind: str = "job", est_seconds: float = 0.0,
+              line_seconds: list[float] | None = None) -> None:
+        cleaned = [line.split(";")[0].strip() for line in lines]
+        if line_seconds is not None and len(line_seconds) == len(lines):
+            line_seconds = [mark for mark, text in zip(line_seconds, cleaned) if text]
+        else:
+            line_seconds = None
+        lines = [text for text in cleaned if text]
         if not lines:
             raise MachineError("Nothing to send: the job is empty.")
         with self._lock:
@@ -206,7 +224,7 @@ class GrblController:
             too_long = next((text for text in lines if len(text) + 1 > self.rx_buffer), None)
             if too_long:
                 raise MachineError(f"G-code line too long for the controller: {too_long[:40]}…")
-            self.job = Job(lines=lines, name=name, kind=kind, est_seconds=est_seconds)
+            self.job = Job(lines=lines, name=name, kind=kind, est_seconds=est_seconds, line_seconds=line_seconds)
             self._log("info", f"{name} started ({len(lines)} lines)")
 
     def pause(self) -> None:

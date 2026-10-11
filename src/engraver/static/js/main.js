@@ -329,8 +329,7 @@ function initStatus() {
 
     const bar = $("job-bar");
     if (job) {
-      const pct = job.total ? Math.round((job.acked / job.total) * 100) : 0;
-      const shown = job.state === "done" ? 100 : pct;
+      const shown = job.state === "done" ? 100 : Math.round((job.progress ?? (job.total ? job.acked / job.total : 0)) * 100);
       bar.firstElementChild.style.width = `${shown}%`;
       bar.setAttribute("aria-valuenow", shown);
       const label = { running: "running", paused: "paused", stopping: "stopping…", done: "finished", stopped: "stopped", error: "stopped with an error" }[job.state];
