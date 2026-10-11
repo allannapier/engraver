@@ -214,8 +214,14 @@ class GrblController:
             self._manual.append("M5")
             self._manual.append("G90 G0 X0 Y0")
 
-    def start(self, lines: list[str], name: str = "Job", kind: str = "job", est_seconds: float = 0.0,
-              line_seconds: list[float] | None = None) -> None:
+    def start(
+        self,
+        lines: list[str],
+        name: str = "Job",
+        kind: str = "job",
+        est_seconds: float = 0.0,
+        line_seconds: list[float] | None = None,
+    ) -> None:
         cleaned = [line.split(";")[0].strip() for line in lines]
         if line_seconds is not None and len(line_seconds) == len(lines):
             line_seconds = [mark for mark, text in zip(line_seconds, cleaned, strict=False) if text]
@@ -416,7 +422,9 @@ class GrblController:
                     self._write(b"\n" + p.STATUS_QUERY)
                     deadline = time.monotonic() + 1.5
                 else:
-                    self._log("error", "No reply from the device. Check the port, the cable and that the laser is powered on.")
+                    self._log(
+                        "error", "No reply from the device. Check the port, the cable and that the laser is powered on."
+                    )
                     return False
         if not self._alive:
             return False
@@ -483,7 +491,11 @@ class GrblController:
                 self._sent.clear()
                 self._sent_bytes = 0
                 if self.job and self.job.state in ("running", "paused", "stopping"):
-                    self.job.state, self.job.error, self.job.ended = "error", "The controller restarted mid-job", time.time()
+                    self.job.state, self.job.error, self.job.ended = (
+                        "error",
+                        "The controller restarted mid-job",
+                        time.time(),
+                    )
                     self._log("error", self.job.error)
         elif (setting := p.parse_setting(text)) is not None:
             self.settings[setting[0]] = setting[1]

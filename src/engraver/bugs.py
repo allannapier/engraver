@@ -105,7 +105,9 @@ if SERVER_LOG not in log.handlers:
 
 # --- redaction ----------------------------------------------------------------------
 
-TOKEN_SHAPES = re.compile(r"\b(sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abp]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,})")
+TOKEN_SHAPES = re.compile(
+    r"\b(sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abp]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,})"
+)
 
 
 def scrub(text: str, secrets: tuple[str, ...] = ()) -> str:
@@ -164,7 +166,7 @@ def _shorten(entry: str, cap: int) -> str:
     """Cut an over-long entry in the middle: a traceback's first line and its last frames matter most."""
     if len(entry) <= cap:
         return entry
-    return entry[:300] + "\n… (middle cut) …\n" + entry[-(cap - 320):]
+    return entry[:300] + "\n… (middle cut) …\n" + entry[-(cap - 320) :]
 
 
 def _tail(lines: list[str], limit: int, max_chars: int, entry_cap: int = 600) -> tuple[str, int]:
@@ -222,7 +224,9 @@ def compose(draft: BugDraft, env: dict, secrets: tuple[str, ...] = ()) -> str:
     else:
         laser = "not connected"
     llm = env.get("llm", {})
-    model = f"{llm['model']} (key {'saved' if llm.get('key_set') else 'not saved'})" if llm.get("model") else "not set up"
+    model = (
+        f"{llm['model']} (key {'saved' if llm.get('key_set') else 'not saved'})" if llm.get("model") else "not set up"
+    )
 
     parts = [f"## What happened\n\n{draft.description.strip()}"]
     if draft.expected.strip():
@@ -303,13 +307,24 @@ def describe_job(job, result, kind: str) -> dict:
     """A compact record of a job for a later report: settings and sizes, not the bulk data."""
     layers = []
     for layer in job.layers:
-        item = {"name": layer.name, "mode": layer.mode, "speed": layer.speed, "power": layer.power, "passes": layer.passes}
+        item = {
+            "name": layer.name,
+            "mode": layer.mode,
+            "speed": layer.speed,
+            "power": layer.power,
+            "passes": layer.passes,
+        }
         if layer.mode == "line":
             item["paths"] = len(layer.polylines)
             item["points"] = sum(len(path) for path in layer.polylines)
         elif layer.raster:
             r = layer.raster
-            item.update(interval=layer.interval, image_mode=layer.image_mode, raster_mm=[r.x, r.y, r.w, r.h], png_chars=len(r.png))
+            item.update(
+                interval=layer.interval,
+                image_mode=layer.image_mode,
+                raster_mm=[r.x, r.y, r.w, r.h],
+                png_chars=len(r.png),
+            )
         layers.append(item)
     lines = result.lines
     return {
@@ -348,7 +363,9 @@ class GitHub:
             self._gh_ok = False
             if shutil.which("gh"):
                 try:
-                    self._gh_ok = subprocess.run(["gh", "auth", "status"], capture_output=True, timeout=8).returncode == 0
+                    self._gh_ok = (
+                        subprocess.run(["gh", "auth", "status"], capture_output=True, timeout=8).returncode == 0
+                    )
                 except (OSError, subprocess.SubprocessError):
                     pass
         return self._gh_ok
@@ -362,14 +379,20 @@ class GitHub:
         return "gh" if self._gh_signed_in() else "link"
 
     def _request(self, path: str, payload: dict | None = None, token: str = "", timeout: float = 20):
-        headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": f"engraver/{__version__}"}
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": f"engraver/{__version__}",
+        }
         if token:
             headers["Authorization"] = f"Bearer {token}"
         data = None
         if payload is not None:
             data = json.dumps(payload).encode()
             headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(f"{self.API}{path}", data=data, headers=headers, method="POST" if data else "GET")
+        request = urllib.request.Request(
+            f"{self.API}{path}", data=data, headers=headers, method="POST" if data else "GET"
+        )
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read())
 
@@ -386,7 +409,9 @@ class GitHub:
                 # Without a token this only succeeds for public repos, which is the answer.
                 result = not self._request(f"/repos/{repo}", token=self.token(), timeout=6).get("private", False)
             else:
-                out = subprocess.run(["gh", "api", f"repos/{repo}", "--jq", ".private"], capture_output=True, text=True, timeout=10)
+                out = subprocess.run(
+                    ["gh", "api", f"repos/{repo}", "--jq", ".private"], capture_output=True, text=True, timeout=10
+                )
                 if out.returncode == 0:
                     result = out.stdout.strip() == "false"
         except (OSError, ValueError, subprocess.SubprocessError):
@@ -457,7 +482,9 @@ def link_fallback(repo: str, title: str, body: str) -> dict:
     note = "\n\n_(Only the start of the report fits in a link. The full report was copied to the clipboard: paste it here to replace this text.)_"
 
     def link(text: str) -> str:
-        return f"https://github.com/{repo}/issues/new?" + urllib.parse.urlencode({"title": title, "body": text, "labels": "bug"})
+        return f"https://github.com/{repo}/issues/new?" + urllib.parse.urlencode(
+            {"title": title, "body": text, "labels": "bug"}
+        )
 
     url = link(body)
     if len(url) > MAX_LINK:

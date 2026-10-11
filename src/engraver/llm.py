@@ -68,8 +68,15 @@ TOOLS = [
                     "name": {"type": "string", "description": "Short name shown in the app."},
                     "svg": {"type": "string", "description": "Complete standalone SVG document."},
                     "width_mm": {"type": "number", "description": "Finished width on the material in mm."},
-                    "mode": {"type": "string", "enum": ["fill", "line"], "description": "fill = engrave, line = score or cut."},
-                    "layer_id": {"type": "string", "description": "Existing layer to put it on. Omit to use the first layer with a matching mode, or a new one."},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["fill", "line"],
+                        "description": "fill = engrave, line = score or cut.",
+                    },
+                    "layer_id": {
+                        "type": "string",
+                        "description": "Existing layer to put it on. Omit to use the first layer with a matching mode, or a new one.",
+                    },
                     "x_mm": {"type": "number", "description": "Left edge, mm from the bed's left. Omit to centre."},
                     "y_mm": {"type": "number", "description": "Front edge, mm from the bed's front. Omit to centre."},
                 },
@@ -172,8 +179,12 @@ def system_prompt(machine: MachineProfile, library: str = "") -> str:
     else:
         own = "- The person hasn't saved any materials of their own yet.\n"
     return SYSTEM_PROMPT.format(
-        name=machine.name, bed_w=machine.bed_w, bed_h=machine.bed_h, max_feed=machine.max_feed,
-        materials=as_prompt_table(), library=own,
+        name=machine.name,
+        bed_w=machine.bed_w,
+        bed_h=machine.bed_h,
+        max_feed=machine.max_feed,
+        materials=as_prompt_table(),
+        library=own,
     )
 
 
@@ -182,10 +193,14 @@ def _context_text(context: dict) -> str:
     selected = ctx.get("selected")
     if selected and isinstance(selected.get("svg"), str) and len(selected["svg"]) > MAX_SVG_CONTEXT:
         ctx["selected"] = {**selected, "svg": selected["svg"][:MAX_SVG_CONTEXT] + "…[truncated]"}
-    return "Current state of the app (for reference, not written by the person):\n" + json.dumps(ctx, separators=(",", ":"))
+    return "Current state of the app (for reference, not written by the person):\n" + json.dumps(
+        ctx, separators=(",", ":")
+    )
 
 
-def build_messages(machine: MachineProfile, history: list[dict], context: dict, image: str | None, library: str = "") -> list[dict]:
+def build_messages(
+    machine: MachineProfile, history: list[dict], context: dict, image: str | None, library: str = ""
+) -> list[dict]:
     messages: list[dict] = [{"role": "system", "content": system_prompt(machine, library)}]
     turns = [m for m in history if m.get("role") in ("user", "assistant") and m.get("content")][-MAX_HISTORY:]
     if not turns or turns[-1]["role"] != "user":
@@ -195,13 +210,15 @@ def build_messages(machine: MachineProfile, history: list[dict], context: dict, 
     last = str(turns[-1]["content"])
     text = f"{last}\n\n{_context_text(context)}"
     if image:
-        messages.append({
-            "role": "user",
-            "content": [
-                {"type": "text", "text": text + "\n\nThe attached image is the canvas as it looks now."},
-                {"type": "image_url", "image_url": {"url": image}},
-            ],
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text + "\n\nThe attached image is the canvas as it looks now."},
+                    {"type": "image_url", "image_url": {"url": image}},
+                ],
+            }
+        )
     else:
         messages.append({"role": "user", "content": text})
     return messages
@@ -314,7 +331,9 @@ async def chat(
             error = exc
             name = exc.__class__.__name__
             # Only capability problems are worth retrying in a simpler form.
-            if not any(key in name for key in ("BadRequest", "UnsupportedParams", "NotSupported", "UnprocessableEntity")):
+            if not any(
+                key in name for key in ("BadRequest", "UnsupportedParams", "NotSupported", "UnprocessableEntity")
+            ):
                 raise AssistantError(_friendly(exc, settings.api_key)) from exc
     else:
         raise AssistantError(_friendly(error, settings.api_key)) from error

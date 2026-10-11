@@ -275,7 +275,16 @@ def raster_power(layer: Layer, s_max: float) -> np.ndarray:
     return np.where(dark < 0.04, 0, np.clip(power, 0, full)).astype(np.int32)
 
 
-def _raster_gcode(out: _Writer, layer: Layer, power: np.ndarray, machine: MachineProfile, to_machine, bounds: Bounds, lo_x: float, hi_x: float) -> None:
+def _raster_gcode(
+    out: _Writer,
+    layer: Layer,
+    power: np.ndarray,
+    machine: MachineProfile,
+    to_machine,
+    bounds: Bounds,
+    lo_x: float,
+    hi_x: float,
+) -> None:
     rows, cols = power.shape
     raster = layer.raster
     px = raster.w / cols
@@ -369,12 +378,16 @@ def build_job(job: JobSpec, machine: MachineProfile) -> GcodeResult:
         }
         sides = [f"{side} by {amount:.0f} mm" if amount >= 1 else side for side, amount in over.items() if amount > eps]
         if sides:
-            raise JobError(f"Part of the job is off the bed ({', '.join(sides)}). Move it inside, or start from the origin instead.")
+            raise JobError(
+                f"Part of the job is off the bed ({', '.join(sides)}). Move it inside, or start from the origin instead."
+            )
         shift_x = shift_y = 0.0
         lo_x, hi_x = 0.0, machine.bed_w
     else:
         if width > machine.bed_w + eps or height > machine.bed_h + eps:
-            raise JobError(f"The job is {width:.0f} × {height:.0f} mm, bigger than the {machine.bed_w:.0f} × {machine.bed_h:.0f} mm bed.")
+            raise JobError(
+                f"The job is {width:.0f} × {height:.0f} mm, bigger than the {machine.bed_w:.0f} × {machine.bed_h:.0f} mm bed."
+            )
         # The job's front-left corner becomes work X0 Y0.
         shift_x, shift_y = extent.min_x, extent.min_y
         lo_x, hi_x = 0.0, width + machine.overscan

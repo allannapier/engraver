@@ -19,9 +19,21 @@ from collections import deque
 WORD_RE = re.compile(r"([A-Z])([-+]?(?:\d+\.?\d*|\.\d+))")
 
 DEFAULT_SETTINGS = {
-    10: 1, 20: 0, 21: 0, 22: 0, 30: 1000, 31: 0, 32: 1,
-    100: 80, 101: 80, 110: 6000, 111: 6000, 120: 1000, 121: 1000,
-    130: 410, 131: 400,
+    10: 1,
+    20: 0,
+    21: 0,
+    22: 0,
+    30: 1000,
+    31: 0,
+    32: 1,
+    100: 80,
+    101: 80,
+    110: 6000,
+    111: 6000,
+    120: 1000,
+    121: 1000,
+    130: 410,
+    131: 400,
 }
 
 
@@ -212,7 +224,9 @@ class GrblSim:
         elif line == "$#":
             self._send(f"[G54:{self.wco[0]:.3f},{self.wco[1]:.3f},0.000]")
         elif line == "$G":
-            self._send(f"[GC:G{self._motion} G54 G17 G21 G{90 if self._abs else 91} M{self._spindle} F{self._feed:g} S{self._s:g}]")
+            self._send(
+                f"[GC:G{self._motion} G54 G17 G21 G{90 if self._abs else 91} M{self._spindle} F{self._feed:g} S{self._s:g}]"
+            )
         else:
             match = re.fullmatch(r"\$(\d+)=([-\d.]+)", line)
             if not match:

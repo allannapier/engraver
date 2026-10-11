@@ -25,8 +25,18 @@ ENV_TOKEN = fake("envtoken", "13579", "24680")
 GH_SHAPED = "ghp_" + string.ascii_lowercase + string.digits  # shaped like a GitHub token
 SK_SHAPED = fake("sk", "proj", string.ascii_uppercase[:24])  # shaped like a provider API key
 
-SQUARE = {"name": "Coaster", "layers": [{"name": "Cut", "mode": "line", "speed": 1200, "power": 60,
-                                         "polylines": [[[10, 10], [30, 10], [30, 30], [10, 30], [10, 10]]]}]}
+SQUARE = {
+    "name": "Coaster",
+    "layers": [
+        {
+            "name": "Cut",
+            "mode": "line",
+            "speed": 1200,
+            "power": 60,
+            "polylines": [[[10, 10], [30, 10], [30, 30], [10, 30], [10, 10]]],
+        }
+    ],
+}
 
 
 class FakeGitHub:
@@ -57,14 +67,23 @@ DRAFT = {
     "description": "Pressed Frame with a design in the corner and the head hit the rail.",
     "expected": "The frame should stay inside the bed.",
     "client": {
-        "user_agent": "Mozilla/5.0 Test", "viewport": "1440x900",
+        "user_agent": "Mozilla/5.0 Test",
+        "viewport": "1440x900",
         "errors": ["TypeError: x is undefined at stage.js:42"],
         "events": ["toast error: Part of the job is off the bed", "POST /api/job/frame -> 422"],
         "actions": ["Design tab", "Frame"],
         "ui": {"materialId": "plywood-3", "originMode": "absolute"},
-        "project": {"layers": [{"id": "L1", "name": "Cut", "mode": "line", "speed": 300}],
-                    "designs": [{"id": "o1", "kind": "svg", "w": 50, "svg": "<rect width='10' height='10'/>"},
-                                {"id": "o2", "kind": "image", "svg": '<image href="data:image/png;base64,' + "A" * 5000 + '" width="9"/>'}]},
+        "project": {
+            "layers": [{"id": "L1", "name": "Cut", "mode": "line", "speed": 300}],
+            "designs": [
+                {"id": "o1", "kind": "svg", "w": 50, "svg": "<rect width='10' height='10'/>"},
+                {
+                    "id": "o2",
+                    "kind": "image",
+                    "svg": '<image href="data:image/png;base64,' + "A" * 5000 + '" width="9"/>',
+                },
+            ],
+        },
         "chat": [{"role": "user", "content": "make a star"}, {"role": "assistant", "content": "Added a star."}],
     },
 }
@@ -73,6 +92,7 @@ DRAFT = {
 def test_report_has_what_someone_fixing_it_needs(client):
     client.post("/api/connect", json={"port": "sim"})
     import time
+
     for _ in range(100):
         if "30" in client.get("/api/state").json()["status"]["settings"]:
             break
@@ -90,6 +110,7 @@ def test_report_has_what_someone_fixing_it_needs(client):
     assert '"30": 1000' in body  # the controller's own settings
     assert '"wpos": [0.0, 0.0]' in body  # short number lists stay on one line
     import re
+
     assert re.search(r"\d\d:\d\d:\d\d Frame started \(\d+ lines\)", body)  # console lines carry the time
     assert '"kind": "frame"' in body and "G1 X30 Y370" in body  # the last job and its G-code
     assert "<rect width='10' height='10'/>" in body
@@ -137,7 +158,10 @@ def test_oversized_reports_drop_the_least_useful_sections():
         "library": [{"name": "m", "notes": "n" * 400}] * 40,
         "machine": {"bed_w": 410},
     }
-    draft.client.project = {"layers": [], "designs": [{"id": str(i), "svg": "<path d='" + "M0 0L1 1" * 2000 + "'/>"} for i in range(60)]}
+    draft.client.project = {
+        "layers": [],
+        "designs": [{"id": str(i), "svg": "<path d='" + "M0 0L1 1" * 2000 + "'/>"} for i in range(60)],
+    }
     draft.client.errors = ["e" * 550] * 60
     draft.client.chat = [{"role": "user", "content": "c" * 1500}] * 8
     body = bugs.compose(draft, env)
@@ -174,7 +198,9 @@ def test_repo_and_token_settings(client):
     assert TOKEN not in client.get("/api/state").text
     client.put("/api/config", json={"bugs": {"repo": "someone/fork", "token": ""}})
     assert client.app.state.store.settings.bugs.token == TOKEN  # blank keeps the saved one
-    assert client.put("/api/config", json={"bugs": {"clear_token": True}}).json()["config"]["bugs"]["token_set"] is False
+    assert (
+        client.put("/api/config", json={"bugs": {"clear_token": True}}).json()["config"]["bugs"]["token_set"] is False
+    )
     assert client.put("/api/config", json={"bugs": {"repo": "not a repo"}}).status_code == 422
     assert client.post("/api/bug/preview", json={"title": "x", "description": "too short"}).status_code == 422
 
@@ -204,13 +230,19 @@ def test_token_filing_calls_the_issues_api(monkeypatch):
     monkeypatch.delenv("ENGRAVER_BUG_DRY_RUN", raising=False)
     github = bugs.GitHub(lambda: TOKEN)
     assert github.method() == "token"
-    assert github.create("o/r", "Title", "Body") == {"url": "https://github.com/o/r/issues/12", "number": 12, "via": "token"}
+    assert github.create("o/r", "Title", "Body") == {
+        "url": "https://github.com/o/r/issues/12",
+        "number": 12,
+        "via": "token",
+    }
     assert len(calls) == 2 and calls[0].full_url == "https://api.github.com/repos/o/r/issues"
     assert calls[0].get_header("Authorization") == f"Bearer {TOKEN}"
     assert json.loads(calls[1].data) == {"title": "Title", "body": "Body"}
 
 
-@pytest.mark.parametrize("code, words", [(401, "rejected the token"), (404, "can't create issues in o/r"), (410, "switched off")])
+@pytest.mark.parametrize(
+    "code, words", [(401, "rejected the token"), (404, "can't create issues in o/r"), (410, "switched off")]
+)
 def test_token_errors_say_what_to_fix(monkeypatch, code, words):
     def urlopen(request, timeout=0):
         raise urllib.error.HTTPError(request.full_url, code, "no", {}, io.BytesIO(b"{}"))
@@ -238,9 +270,23 @@ def test_gh_filing_passes_the_body_on_stdin(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     github = bugs.GitHub(lambda: "")
     assert github.method() == "gh"
-    assert github.create("o/r", "Title with \"quotes\"", "Body `text`") == {"url": "https://github.com/o/r/issues/31", "number": 31, "via": "gh"}
+    assert github.create("o/r", 'Title with "quotes"', "Body `text`") == {
+        "url": "https://github.com/o/r/issues/31",
+        "number": 31,
+        "via": "gh",
+    }
     creates = [r for r in runs if r[0][:3] == ["gh", "issue", "create"]]
-    assert len(creates) == 2 and creates[1][0] == ["gh", "issue", "create", "--repo", "o/r", "--title", 'Title with "quotes"', "--body-file", "-"]
+    assert len(creates) == 2 and creates[1][0] == [
+        "gh",
+        "issue",
+        "create",
+        "--repo",
+        "o/r",
+        "--title",
+        'Title with "quotes"',
+        "--body-file",
+        "-",
+    ]
     assert creates[1][1] == "Body `text`"  # never interpolated into a shell command
 
 

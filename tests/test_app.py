@@ -36,8 +36,17 @@ def connect(client):
     wait_for(client, lambda s: s["connected"] and "30" in s["settings"])
 
 
-SQUARE = {"layers": [{"name": "Cut", "mode": "line", "speed": 1200, "power": 60,
-                      "polylines": [[[10, 10], [30, 10], [30, 30], [10, 30], [10, 10]]]}]}
+SQUARE = {
+    "layers": [
+        {
+            "name": "Cut",
+            "mode": "line",
+            "speed": 1200,
+            "power": 60,
+            "polylines": [[[10, 10], [30, 10], [30, 30], [10, 30], [10, 10]]],
+        }
+    ]
+}
 
 
 def test_requests_from_other_sites_are_refused(client):
@@ -53,8 +62,10 @@ def test_static_app_is_served(client):
 
 
 def test_config_round_trip_never_returns_the_key(client):
-    r = client.put("/api/config", json={"llm": {"model": "anthropic/claude-sonnet-5-5", "api_key": "sk-secret-1234"},
-                                        "machine": {"bed_w": 400}})
+    r = client.put(
+        "/api/config",
+        json={"llm": {"model": "anthropic/claude-sonnet-5-5", "api_key": "sk-secret-1234"}, "machine": {"bed_w": 400}},
+    )
     cfg = r.json()["config"]
     assert "api_key" not in cfg["llm"] and cfg["llm"]["api_key_set"] and cfg["llm"]["api_key_hint"] == "…1234"
     assert cfg["machine"]["bed_w"] == 400
@@ -146,7 +157,9 @@ def test_live_updates_over_websocket(client):
 
 
 def fake_response(text="", tool_calls=()):
-    calls = [SimpleNamespace(function=SimpleNamespace(name=name, arguments=json.dumps(args))) for name, args in tool_calls]
+    calls = [
+        SimpleNamespace(function=SimpleNamespace(name=name, arguments=json.dumps(args))) for name, args in tool_calls
+    ]
     return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text, tool_calls=calls or None))])
 
 
@@ -161,11 +174,22 @@ def test_assistant_returns_actions_and_sees_context(client):
 
     async def completion(**kwargs):
         calls.append(kwargs)
-        return fake_response("Added a star on the engrave layer.", [
-            ("add_design", {"name": "Star", "svg": "<svg xmlns='http://www.w3.org/2000/svg'/>", "width_mm": 60, "mode": "fill"}),
-            ("set_layer", {"layer_id": "L1", "speed": 6000, "power": 50}),
-            ("fire_laser", {"power": 100}),
-        ])
+        return fake_response(
+            "Added a star on the engrave layer.",
+            [
+                (
+                    "add_design",
+                    {
+                        "name": "Star",
+                        "svg": "<svg xmlns='http://www.w3.org/2000/svg'/>",
+                        "width_mm": 60,
+                        "mode": "fill",
+                    },
+                ),
+                ("set_layer", {"layer_id": "L1", "speed": 6000, "power": 50}),
+                ("fire_laser", {"power": 100}),
+            ],
+        )
 
     client.app.state.completion = completion
     body = {
@@ -201,12 +225,20 @@ def test_assistant_falls_back_when_the_model_rejects_tools(client):
         return fake_response("Here you go.\n```svg\n<svg viewBox='0 0 10 10'><circle cx='5' cy='5' r='4'/></svg>\n```")
 
     client.app.state.completion = completion
-    body = {"messages": [{"role": "user", "content": "circle"}], "context": {"selected": {"id": "o7", "svg": "<svg/>"}},
-            "image": "data:image/png;base64,AAAA"}
+    body = {
+        "messages": [{"role": "user", "content": "circle"}],
+        "context": {"selected": {"id": "o7", "svg": "<svg/>"}},
+        "image": "data:image/png;base64,AAAA",
+    }
     reply = client.post("/api/ai/chat", json=body).json()
     assert attempts == [(True, True), (True, False), (False, False)]
-    assert reply["actions"] == [{"type": "replace_design", "design_id": "o7",
-                                 "svg": "<svg viewBox='0 0 10 10'><circle cx='5' cy='5' r='4'/></svg>"}]
+    assert reply["actions"] == [
+        {
+            "type": "replace_design",
+            "design_id": "o7",
+            "svg": "<svg viewBox='0 0 10 10'><circle cx='5' cy='5' r='4'/></svg>",
+        }
+    ]
     assert reply["text"] == "Here you go."
 
 
@@ -237,8 +269,18 @@ def test_assistant_errors_are_readable_and_hide_the_key(client):
 # --- material library ----------------------------------------------------------
 
 PLY = {
-    "id": "my-birch-ply-3mm", "name": "Birch ply 3 mm", "notes": "From the hobby shop, slightly warped",
-    "engrave": {"mode": "fill", "speed": 4000, "power": 55, "passes": 1, "interval": 0.1, "source": "test", "date": "2026-10-11"},
+    "id": "my-birch-ply-3mm",
+    "name": "Birch ply 3 mm",
+    "notes": "From the hobby shop, slightly warped",
+    "engrave": {
+        "mode": "fill",
+        "speed": 4000,
+        "power": 55,
+        "passes": 1,
+        "interval": 0.1,
+        "source": "test",
+        "date": "2026-10-11",
+    },
     "cut": {"mode": "line", "speed": 250, "power": 100, "passes": 2, "source": "saved", "date": "2026-10-11"},
 }
 
@@ -264,7 +306,9 @@ def test_library_saves_updates_and_deletes(client, tmp_path):
 
 def test_library_rejects_bad_entries(client):
     assert client.put("/api/library/my-x", json={**PLY, "id": "my-other"}).status_code == 422
-    assert client.put("/api/library/plywood-3", json={**PLY, "id": "plywood-3"}).status_code == 422  # built-in ids are off limits
+    assert (
+        client.put("/api/library/plywood-3", json={**PLY, "id": "plywood-3"}).status_code == 422
+    )  # built-in ids are off limits
     too_hot = {**PLY, "engrave": {**PLY["engrave"], "power": 140}}
     assert client.put(f"/api/library/{PLY['id']}", json=too_hot).status_code == 422
     assert client.put(f"/api/library/{PLY['id']}", json=PLY).status_code == 200
@@ -298,7 +342,10 @@ def test_assistant_is_told_about_the_persons_own_materials(client):
     client.put(f"/api/library/{PLY['id']}", json=PLY)
     client.post("/api/ai/chat", json=ask)
     prompt = seen[1]
-    assert "Birch ply 3 mm: engrave fill 4000 mm/min 55% x1, interval 0.1 mm (picked from a test grid on 2026-10-11)" in prompt
+    assert (
+        "Birch ply 3 mm: engrave fill 4000 mm/min 55% x1, interval 0.1 mm (picked from a test grid on 2026-10-11)"
+        in prompt
+    )
     assert "cut line 250 mm/min 100% x2 (saved by the person on 2026-10-11)" in prompt
     assert "slightly warped" in prompt and "take priority" in prompt
     assert prompt.index("Birch ply 3 mm") < prompt.index("Plywood (basswood/birch), 3 mm")
@@ -320,7 +367,13 @@ def test_port_list_hides_ports_with_no_hardware_behind_them(client, monkeypatch)
     assert [p["device"] for p in listing["ports"]] == ["/dev/ttyUSB0", "/dev/ttyAMA0", "sim"]
     assert listing["hidden"] == 2
     everything = client.get("/api/ports?all=true").json()
-    assert [p["device"] for p in everything["ports"]] == ["/dev/ttyUSB0", "/dev/ttyAMA0", "/dev/ttyS0", "/dev/ttyS1", "sim"]
+    assert [p["device"] for p in everything["ports"]] == [
+        "/dev/ttyUSB0",
+        "/dev/ttyAMA0",
+        "/dev/ttyS0",
+        "/dev/ttyS1",
+        "sim",
+    ]
     assert everything["hidden"] == 0
 
 

@@ -213,10 +213,17 @@ def test_fill_origin_is_the_corner_of_what_burns_not_of_the_bitmap():
 
 def test_progress_marks_follow_time_not_line_count():
     # A long slow cut after a fast short one: half the lines are nowhere near half the time.
-    job = JobSpec(layers=[
-        {"mode": "line", "speed": 6000, "power": 10, "polylines": [[(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 1)]]},
-        {"mode": "line", "speed": 100, "power": 100, "polylines": [[(0, 10), (100, 10)]]},
-    ])
+    job = JobSpec(
+        layers=[
+            {
+                "mode": "line",
+                "speed": 6000,
+                "power": 10,
+                "polylines": [[(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 1)]],
+            },
+            {"mode": "line", "speed": 100, "power": 100, "polylines": [[(0, 10), (100, 10)]]},
+        ]
+    )
     result = build_job(job, MACHINE)
     marks = result.line_seconds
     assert len(marks) == len(result.lines)

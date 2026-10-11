@@ -112,7 +112,9 @@ async def _until_closed(socket: WebSocket) -> None:
         pass
 
 
-def create_app(store: ConfigStore | None = None, sim_speed: float | None = None, extra_hosts: tuple[str, ...] = ()) -> FastAPI:
+def create_app(
+    store: ConfigStore | None = None, sim_speed: float | None = None, extra_hosts: tuple[str, ...] = ()
+) -> FastAPI:
     store = store or ConfigStore()
     library = MaterialLibrary(library_path(store.path))
     hub = Hub()
@@ -128,7 +130,9 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
         hub.loop = None
         await asyncio.to_thread(controller.disconnect)
 
-    app = FastAPI(title="Engraver", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(
+        title="Engraver", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+    )
     app.state.controller = controller
     app.state.store = store
     app.state.hub = hub
@@ -140,7 +144,9 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
     @app.middleware("http")
     async def guard(request: Request, call_next):
         if not _host_ok(request.headers, allowed_hosts):
-            return JSONResponse({"detail": "Request refused: Engraver only answers its own page on this computer."}, status_code=403)
+            return JSONResponse(
+                {"detail": "Request refused: Engraver only answers its own page on this computer."}, status_code=403
+            )
         response = await call_next(request)
         if not request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-cache"
@@ -162,7 +168,9 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
     async def unexpected(request: Request, exc: Exception):
         # Kept for bug reports: the traceback is what someone fixing it needs most.
         bugs.log.error("%s %s failed", request.method, request.url.path, exc_info=exc)
-        return JSONResponse({"detail": "Engraver hit an internal error. Use Report a bug to send the details."}, status_code=500)
+        return JSONResponse(
+            {"detail": "Engraver hit an internal error. Use Report a bug to send the details."}, status_code=500
+        )
 
     @app.exception_handler(LibraryError)
     async def library_error(request: Request, exc: LibraryError):
@@ -236,7 +244,10 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
     @app.get("/api/ports")
     def ports(all: bool = False):
         found, hidden = list_ports(show_all=all)
-        return {"ports": [*found, {"device": SIM_PORT, "description": "Simulator (no laser needed)", "usb": False}], "hidden": hidden}
+        return {
+            "ports": [*found, {"device": SIM_PORT, "description": "Simulator (no laser needed)", "usb": False}],
+            "hidden": hidden,
+        }
 
     @app.post("/api/connect")
     def connect(body: ConnectBody):
@@ -299,7 +310,13 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
         require_laser_mode()
         result = build_job(body.job, machine())
         app.state.last_job = bugs.describe_job(body.job, result, "job")
-        controller.start(result.lines, name=body.job.name, kind="job", est_seconds=result.est_seconds, line_seconds=result.line_seconds)
+        controller.start(
+            result.lines,
+            name=body.job.name,
+            kind="job",
+            est_seconds=result.est_seconds,
+            line_seconds=result.line_seconds,
+        )
         return result.summary()
 
     @app.post("/api/job/frame")
@@ -337,8 +354,13 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
     @app.post("/api/ai/chat")
     async def ai_chat(body: ChatBody):
         return await llm.chat(
-            store.settings.llm, machine(), body.messages, body.context, body.image,
-            completion=app.state.completion, library=library.as_prompt(),
+            store.settings.llm,
+            machine(),
+            body.messages,
+            body.context,
+            body.image,
+            completion=app.state.completion,
+            library=library.as_prompt(),
         )
 
     @app.post("/api/ai/test")
@@ -349,7 +371,12 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
     # --- bug reports -----------------------------------------------------------
 
     def secrets() -> tuple[str, ...]:
-        return (store.settings.llm.api_key, store.settings.bugs.token, os.environ.get("GITHUB_TOKEN", ""), os.environ.get("GH_TOKEN", ""))
+        return (
+            store.settings.llm.api_key,
+            store.settings.bugs.token,
+            os.environ.get("GITHUB_TOKEN", ""),
+            os.environ.get("GH_TOKEN", ""),
+        )
 
     @app.get("/api/bug/status")
     def bug_status():
@@ -365,7 +392,12 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
             "app": bugs.app_info(),
             "status": controller.snapshot(),
             "machine": machine().model_dump(),
-            "llm": {"model": settings.llm.model, "key_set": bool(settings.llm.api_key), "api_base": settings.llm.api_base, "vision": settings.llm.vision},
+            "llm": {
+                "model": settings.llm.model,
+                "key_set": bool(settings.llm.api_key),
+                "api_base": settings.llm.api_base,
+                "vision": settings.llm.vision,
+            },
             "console": [
                 f"{time.strftime('%H:%M:%S', time.localtime(e.get('t', 0)))} {'> ' if e.get('kind') == 'tx' else ''}{e.get('text', '')}"
                 + (" [error]" if e.get("kind") == "error" else "")
