@@ -76,6 +76,28 @@ It acts by editing the canvas and the layer settings, and each reply is one undo
 
 Settings live in `~/.engraver/config.json` (override with `ENGRAVER_CONFIG`). The API key is stored there in plain text, readable only by you, and is sent only to the provider you chose.
 
+## Reporting a bug
+
+**Report a bug** (top right) files a GitHub issue with what someone needs to fix it:
+
+- your description, plus what you expected
+- app version and commit, Python, OS, browser
+- machine state and the controller's `$$` settings
+- the last job sent (settings, size, first lines of G-code)
+- the laser console, server errors with tracebacks, browser errors, failed requests and recent clicks
+- layers and designs on the canvas, without pictures
+- optionally, the last few assistant messages
+
+You always see the full text first and can edit or delete any of it. API keys and tokens are stripped out, and your home folder's path is shortened to `~`. It never records what you type into text boxes.
+
+How it files, in order of preference:
+
+1. A GitHub token saved in Setup (or `GITHUB_TOKEN` / `GH_TOKEN`). It needs Issues read and write access to the repository.
+2. The `gh` command-line tool, if it's installed and signed in. No setup needed.
+3. Otherwise it opens a pre-filled issue page for you to submit, with the full report on your clipboard.
+
+The repository defaults to `allannapier/engraver` and can be changed in Setup. That repository is public, so reports are too. Set `ENGRAVER_BUG_DRY_RUN=1` to try the form without creating anything.
+
 ## Machine notes
 
 - The A10 speaks GRBL at 115200 baud. On connect the app reads the controller's `$$` settings: the full-power value (`$30`) and top speed (`$110`) come from the machine, and Setup offers the reported travel as the bed size.
@@ -101,6 +123,7 @@ src/engraver/
   gcode.py          job description -> G-code (vector, raster, frame)
   materials.py      generic starting-point table and never-laser list
   library.py        your own materials (saved and tested settings)
+  bugs.py           bug reports: diagnostics, redaction, filing the GitHub issue
   llm.py            assistant prompt, tools, LiteLLM call
   config.py         saved settings
   static/           the browser app (plain ES modules, no build step)

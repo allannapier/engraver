@@ -14,6 +14,35 @@ async function save(patch) {
   emit("config");
 }
 
+function bugSection() {
+  const bugs = state.config.bugs || {};
+  const repo = h("input", { type: "text", value: bugs.repo || "", placeholder: "owner/repository", spellcheck: "false", autocomplete: "off" });
+  const token = h("input", { type: "password", value: "", autocomplete: "off", placeholder: bugs.token_set ? "Saved. Type to replace" : "Optional" });
+  return h("section", {},
+    h("h2", {}, "Bug reports"),
+    h("p", { class: "note", style: "margin-bottom:10px" }, "Report a bug files a GitHub issue here. If the gh command-line tool is signed in on this computer, no token is needed."),
+    h("div", { style: "display:grid;gap:10px" },
+      h("label", { class: "field" }, "Repository", repo),
+      h("label", { class: "field" }, "GitHub token", token),
+      h("div", { class: "row" },
+        h("button", {
+          type: "button", class: "btn small",
+          onclick: act(async () => {
+            await save({ bugs: { repo: repo.value.trim(), token: token.value.trim() } });
+            toast("Bug report settings saved.");
+          }),
+        }, "Save"),
+        bugs.token_set && h("button", {
+          type: "button", class: "btn small ghost",
+          onclick: act(async () => {
+            await save({ bugs: { clear_token: true } });
+            toast("GitHub token removed.");
+          }),
+        }, "Remove token")),
+    ),
+  );
+}
+
 function build() {
   const llm = state.config.llm || {};
   const machine = state.config.machine || {};
@@ -100,6 +129,7 @@ function build() {
           }, "Remove key")),
       ),
     ),
+    bugSection(),
     h("section", {},
       h("h2", {}, "Machine"),
       machineForm,

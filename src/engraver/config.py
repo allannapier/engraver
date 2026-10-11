@@ -13,6 +13,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from .bugs import BugSettings
 from .gcode import MachineProfile
 
 
@@ -27,6 +28,7 @@ class LLMSettings(BaseModel):
 class Settings(BaseModel):
     machine: MachineProfile = MachineProfile()
     llm: LLMSettings = LLMSettings()
+    bugs: BugSettings = BugSettings()
 
 
 def default_path() -> Path:
@@ -67,6 +69,8 @@ class ConfigStore:
         key = data["llm"].pop("api_key")
         data["llm"]["api_key_set"] = bool(key)
         data["llm"]["api_key_hint"] = f"…{key[-4:]}" if len(key) >= 8 else ""
+        token = data["bugs"].pop("token")
+        data["bugs"]["token_set"] = bool(token)
         return data
 
     def update(self, patch: dict) -> None:
@@ -81,5 +85,14 @@ class ConfigStore:
         llm_patch.pop("api_key_set", None)
         llm_patch.pop("api_key_hint", None)
         llm = {**current["llm"], **llm_patch}
-        self.settings = Settings.model_validate({"machine": machine, "llm": llm})
+        bugs_patch = dict(patch.get("bugs") or {})
+        if bugs_patch.pop("clear_token", False):
+            bugs_patch["token"] = ""
+        elif not bugs_patch.get("token"):
+            bugs_patch.pop("token", None)
+        bugs_patch.pop("token_set", None)
+        if "repo" in bugs_patch:
+            bugs_patch["repo"] = str(bugs_patch["repo"]).strip().removeprefix("https://github.com/").strip("/")
+        bugs = {**current["bugs"], **bugs_patch}
+        self.settings = Settings.model_validate({"machine": machine, "llm": llm, "bugs": bugs})
         self.save()
