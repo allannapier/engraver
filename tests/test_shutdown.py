@@ -38,7 +38,10 @@ def test_ctrl_c_exits_quickly_and_stops_the_job(tmp_path):
     env = {**os.environ, "ENGRAVER_CONFIG": str(tmp_path / "config.json"), "ENGRAVER_SIM_SPEED": "1"}
     server = subprocess.Popen(
         [sys.executable, "-m", "engraver.cli", "--no-browser", "--port", str(port)],
-        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
     )
     try:
         deadline = time.monotonic() + 15
@@ -56,7 +59,11 @@ def test_ctrl_c_exits_quickly_and_stops_the_job(tmp_path):
                 call(port, "/api/connect", {"port": "sim"})
                 while not (status := call(port, "/api/state")["status"])["connected"] or "30" not in status["settings"]:
                     await asyncio.sleep(0.05)
-                long_cut = {"layers": [{"mode": "line", "speed": 300, "power": 100, "polylines": [[[0, 0], [300, 0], [300, 300]]]}]}
+                long_cut = {
+                    "layers": [
+                        {"mode": "line", "speed": 300, "power": 100, "polylines": [[[0, 0], [300, 0], [300, 300]]]}
+                    ]
+                }
                 call(port, "/api/job/start", {"job": long_cut})
                 while call(port, "/api/state")["status"]["state"] != "Run":
                     await asyncio.sleep(0.05)

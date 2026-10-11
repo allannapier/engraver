@@ -1,5 +1,7 @@
 # Engraver
 
+[![CI](https://github.com/allannapier/engraver/actions/workflows/ci.yml/badge.svg)](https://github.com/allannapier/engraver/actions/workflows/ci.yml)
+
 A local browser app for designing and running jobs on an Atomstack A10 (or any GRBL diode laser). A small Python server talks to the laser over USB; the app runs in your browser at `127.0.0.1`.
 
 - **Canvas**: import SVGs and pictures, add text and shapes, then move, scale and rotate them on a to-scale bed.
@@ -135,14 +137,20 @@ The browser does the geometry: line layers are traced from the live SVG into pol
 
 ```bash
 uv run pytest                      # controller vs simulator, G-code, API, assistant with a fake provider
+uv run pytest --cov                # the same, with coverage (fails under 85 %)
+uv run ruff check .                # lint
+uv run ruff format .               # format
 ```
 
-Browser test (needs Node and Playwright):
+Browser test (needs Node):
 
 ```bash
-ENGRAVER_SIM_SPEED=20 ENGRAVER_CONFIG=/tmp/engraver-e2e.json uv run engraver --no-browser &
+(cd tests/e2e && npm ci && npx playwright install chromium)   # once
+ENGRAVER_SIM_SPEED=20 ENGRAVER_BUG_DRY_RUN=1 ENGRAVER_CONFIG=/tmp/engraver-e2e.json uv run engraver --no-browser &
 node tests/e2e/smoke.mjs
 ```
+
+CI (`.github/workflows/ci.yml`) runs all of this on every pull request and on `main`: lint and format, the unit tests on Python 3.11 to 3.14, the browser test against the simulator, and a wheel build that checks the frontend is packaged.
 
 ## Not there yet
 

@@ -1,0 +1,8 @@
+{
+  "name": "engraver-e2e",
+  "private": true,
+  "description": "Browser test dependencies. Run `npm ci` here, then `node tests/e2e/smoke.mjs` from the repo root.",
+  "devDependencies": {
+    "playwright": "1.64.0"
+  }
+}

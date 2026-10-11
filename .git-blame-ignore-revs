@@ -1,0 +1,5 @@
+# Commits that only reformat. `git blame --ignore-revs-file .git-blame-ignore-revs` skips them,
+# and GitHub's blame view does so automatically.
+
+# Format with ruff
+82d05cb9234e37c5480b9e5232f6a3529ca11b39

@@ -44,7 +44,7 @@ def test_parse_status():
 
 
 def test_connect_reads_machine_settings(rig):
-    ctl, sim, _ = rig
+    ctl, _sim, _ = rig
     assert ctl.version.startswith("Grbl 1.1")
     assert ctl.settings[30] == 1000 and ctl.settings[32] == 1
     assert ctl.snapshot()["state"] == "Idle"
@@ -110,7 +110,7 @@ def test_stop_halts_the_laser_and_keeps_position(rig):
 
 
 def test_error_on_a_job_line_stops_the_job(rig):
-    ctl, sim, events = rig
+    ctl, sim, _events = rig
     sim.speed = 2
     ctl.start(["G21", "G90", "M4 S0", "G1 X50 S400 F600", "G99", "G1 X80"])
     wait_for(lambda: ctl.job.state == "error", message="job error")
@@ -178,11 +178,15 @@ def test_disconnect_mid_job_turns_everything_off(rig):
 
 def test_connect_to_a_silent_port_fails_cleanly():
     class Silent:
-        def write(self, data): pass
+        def write(self, data):
+            pass
+
         def read(self, timeout=0.05):
             time.sleep(0.01)
             return b""
-        def close(self): self.closed = True
+
+        def close(self):
+            self.closed = True
 
     events = []
     ctl = GrblController(on_event=events.append)
@@ -196,7 +200,19 @@ def test_connect_to_a_silent_port_fails_cleanly():
 def test_progress_follows_estimated_time(rig):
     ctl, sim, _ = rig
     sim.speed = 3
-    lines = ["G21", "G90", "M4 S0", "G0 X0 Y0", "G1 X1 S100 F6000", "G1 X2", "G1 X3", "G1 X4", "G4 P0", "G1 X80 F600", "M5"]
+    lines = [
+        "G21",
+        "G90",
+        "M4 S0",
+        "G0 X0 Y0",
+        "G1 X1 S100 F6000",
+        "G1 X2",
+        "G1 X3",
+        "G1 X4",
+        "G4 P0",
+        "G1 X80 F600",
+        "M5",
+    ]
     marks = [0, 0, 0, 0, 0.01, 0.02, 0.03, 0.04, 0.04, 7.64, 7.64]
     ctl.start(lines, line_seconds=marks)
     # G4 waits for the short moves to finish, so the slow move isn't acknowledged yet.
@@ -219,7 +235,9 @@ def test_stop_right_after_start_never_resets_mid_motion(rig):
         while ctl.job.sent == 0:  # spin until the lines have just been written...
             pass
         ctl.stop()  # ...so the hold lands before the simulator has read them
-        wait_for(lambda: ctl.job.state == "stopped" and ctl.state == "Idle", message=f"stopped cleanly on attempt {attempt}")
+        wait_for(
+            lambda: ctl.job.state == "stopped" and ctl.state == "Idle", message=f"stopped cleanly on attempt {attempt}"
+        )
         assert sim.state == "Idle" and ctl.alarm is None, f"attempt {attempt} ended in {sim.state}"
         still = list(sim.mpos)
         time.sleep(0.1)

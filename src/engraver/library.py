@@ -79,7 +79,14 @@ class MaterialLibrary:
         with self._lock:
             if material.id not in self._items and len(self._items) >= self.MAX_ENTRIES:
                 raise LibraryError("The material library is full. Delete one you no longer use.")
-            clash = next((m for m in self._items.values() if m.id != material.id and m.name.strip().lower() == material.name.strip().lower()), None)
+            clash = next(
+                (
+                    m
+                    for m in self._items.values()
+                    if m.id != material.id and m.name.strip().lower() == material.name.strip().lower()
+                ),
+                None,
+            )
             if clash:
                 raise LibraryError(f'You already have a material called "{clash.name}". Pick a different name.')
             self._items[material.id] = material
@@ -99,10 +106,16 @@ class MaterialLibrary:
                 cfg = mat.get(op)
                 if not cfg:
                     continue
-                origin = {"test": "picked from a test grid", "saved": "saved by the person", "starting": "untested starting point"}[cfg["source"]]
+                origin = {
+                    "test": "picked from a test grid",
+                    "saved": "saved by the person",
+                    "starting": "untested starting point",
+                }[cfg["source"]]
                 extra = f", interval {cfg['interval']} mm" if cfg.get("interval") else ""
                 when = f" on {cfg['date']}" if cfg.get("date") and cfg["source"] != "starting" else ""
-                parts.append(f"{op} {cfg['mode']} {cfg['speed']:g} mm/min {cfg['power']:g}% x{cfg['passes']}{extra} ({origin}{when})")
+                parts.append(
+                    f"{op} {cfg['mode']} {cfg['speed']:g} mm/min {cfg['power']:g}% x{cfg['passes']}{extra} ({origin}{when})"
+                )
             if not parts and not mat["notes"]:
                 continue
             line = f"{mat['name']}: " + "; ".join(parts) if parts else f"{mat['name']}: no settings saved yet"

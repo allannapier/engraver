@@ -27,8 +27,8 @@ def run(lines):
     spindle = False
     burns, moves = [], []
     for line in lines:
-        words = dict((k, float(v)) for k, v in re.findall(r"([A-Z])([-\d.]+)", line))
-        if line.startswith("M4") or line.startswith("M3"):
+        words = {k: float(v) for k, v in re.findall(r"([A-Z])([-\d.]+)", line)}
+        if line.startswith(("M4", "M3")):
             spindle = True
         if line.startswith("M5"):
             spindle = False
@@ -52,7 +52,7 @@ def test_vector_flips_y_and_scales_power():
     # A 10 mm square whose top-left is 20 mm from the left and 30 mm from the top of the canvas.
     square = [[(20, 30), (30, 30), (30, 40), (20, 40), (20, 30)]]
     result = build_job(line_job(square), MACHINE)
-    burns, moves = run(result.lines)
+    burns, _moves = run(result.lines)
     assert len(burns) == 4
     assert all(b[4] == 800 for b in burns)
     xs = [v for b in burns for v in (b[0], b[2])]
@@ -213,10 +213,17 @@ def test_fill_origin_is_the_corner_of_what_burns_not_of_the_bitmap():
 
 def test_progress_marks_follow_time_not_line_count():
     # A long slow cut after a fast short one: half the lines are nowhere near half the time.
-    job = JobSpec(layers=[
-        {"mode": "line", "speed": 6000, "power": 10, "polylines": [[(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 1)]]},
-        {"mode": "line", "speed": 100, "power": 100, "polylines": [[(0, 10), (100, 10)]]},
-    ])
+    job = JobSpec(
+        layers=[
+            {
+                "mode": "line",
+                "speed": 6000,
+                "power": 10,
+                "polylines": [[(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 1)]],
+            },
+            {"mode": "line", "speed": 100, "power": 100, "polylines": [[(0, 10), (100, 10)]]},
+        ]
+    )
     result = build_job(job, MACHINE)
     marks = result.line_seconds
     assert len(marks) == len(result.lines)

@@ -6,3 +6,6 @@ dist/
 *.egg-info/
 node_modules/
 .DS_Store
+.coverage
+coverage.xml
+.ruff_cache/
