@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to a pull request replaces the run in progress. Runs on main always finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  UV_LOCKED: "1" # fail if uv.lock is out of step with pyproject.toml
+  FORCE_COLOR: "1"
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Install
+        run: uv sync
+      - name: Ruff lint
+        run: uv run ruff check --output-format=github .
+      - name: Ruff format
+        run: uv run ruff format --check --diff .
+      - name: JavaScript parses
+        run: |
+          for file in src/engraver/static/js/*.js tests/e2e/*.mjs; do
+            node --check "$file"
+          done
+
+  test:
+    name: Tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: uv sync
+      - name: Unit tests with coverage
+        run: uv run pytest --cov --cov-report=term
+      - name: Coverage summary
+        if: always() && matrix.python == '3.13'
+        run: uv run coverage report --format=markdown --fail-under=0 >> "$GITHUB_STEP_SUMMARY"
+
+  e2e:
+    name: Browser test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ENGRAVER_SIM_SPEED: "20"
+      ENGRAVER_BUG_DRY_RUN: "1" # never file a real issue from CI
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: tests/e2e/package-lock.json
+      - name: Install
+        run: uv sync
+      - name: Install Playwright and Chromium
+        working-directory: tests/e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Start the app on the simulator
+        run: |
+          mkdir -p "$RUNNER_TEMP/e2e/shots"
+          ENGRAVER_CONFIG="$RUNNER_TEMP/e2e/config.json" \
+            nohup uv run engraver --no-browser --port 8642 > "$RUNNER_TEMP/e2e/server.log" 2>&1 &
+          timeout 60 bash -c 'until curl -sf http://127.0.0.1:8642/ > /dev/null; do sleep 1; done'
+      - name: Browser smoke test
+        run: node tests/e2e/smoke.mjs "$RUNNER_TEMP/e2e/shots"
+      - name: Server log
+        if: failure()
+        run: cat "$RUNNER_TEMP/e2e/server.log"
+      - name: Keep screenshots and server log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-failure
+          path: ${{ runner.temp }}/e2e
+          retention-days: 7
+
+  build:
+    name: Package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Build
+        run: uv build
+      - name: Wheel carries the frontend
+        run: |
+          unzip -l dist/*.whl | tee wheel.txt
+          grep -q "engraver/static/index.html" wheel.txt
+          grep -q "engraver/static/js/main.js" wheel.txt
+      - name: Installed wheel starts
+        run: uvx --from dist/*.whl engraver --help
+
+  # One check to require in branch protection, whatever the matrix looks like.
+  passed:
+    name: CI passed
+    if: always()
+    needs: [lint, test, e2e, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Every job succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for result in $RESULTS; do
+            [ "$result" = "success" ] || exit 1
+          done

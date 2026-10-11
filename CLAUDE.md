@@ -5,8 +5,11 @@ Local browser app that drives a GRBL diode laser (Atomstack A10). Python/FastAPI
 ## Commands
 
 - Run: `uv run engraver` (port 8642). `ENGRAVER_SIM_SPEED=20` speeds up the simulator; `ENGRAVER_CONFIG=path` points at a throwaway settings file.
-- Tests: `uv run pytest`
-- Browser test: start the server as above, then `node tests/e2e/smoke.mjs [screenshot-dir]` (set `PLAYWRIGHT_PATH` if `playwright` isn't resolvable).
+- Tests: `uv run pytest` (`--cov` for coverage; CI fails under 85 %)
+- Lint and format: `uv run ruff check .` and `uv run ruff format .`. CI fails on either, so run both before pushing.
+- Browser test: start the server as above, then `node tests/e2e/smoke.mjs [screenshot-dir]` (`npm ci` in `tests/e2e` installs Playwright; set `PLAYWRIGHT_PATH` to use one from elsewhere).
+
+- CI is `.github/workflows/ci.yml`: lint, tests on Python 3.11 to 3.14, the browser test, and a wheel build. Actions are pinned to commit SHAs.
 
 ## Rules that must keep holding
 
