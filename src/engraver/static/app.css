@@ -125,7 +125,8 @@ input[type="checkbox"] { accent-color: var(--diode-strong); width: 16px; height:
 .propbar { display: flex; align-items: center; padding: 0 12px; background: var(--chrome); border-bottom: 1px solid #1b1f25; font-size: 13px; overflow-x: auto; }
 .prop-fields { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
 .prop-fields label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
-.prop-fields input { width: 76px; height: 28px; color: var(--text); }
+.prop-fields input { width: 80px; height: 28px; color: var(--text); appearance: textfield; -moz-appearance: textfield; }
+.prop-fields input::-webkit-inner-spin-button, .prop-fields input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .prop-fields select { height: 28px; color: var(--text); max-width: 140px; }
 .prop-fields .icon-btn { width: 26px; height: 28px; margin: 0 -8px; }
 .prop-unit, .stage-hint { color: var(--muted); font-size: 13px; }
@@ -177,7 +178,8 @@ input[type="checkbox"] { accent-color: var(--diode-strong); width: 16px; height:
 .row { display: flex; align-items: center; gap: 8px; }
 .row.wrap { flex-wrap: wrap; }
 .spread { justify-content: space-between; }
-.field { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+/* minmax(0, …) lets inputs shrink to the column; without it a wide system font pushes them past the panel. */
+.field { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; font-size: 13px; color: var(--muted); }
 .field > input, .field > select, .field > textarea { color: var(--text); width: 100%; }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-items: end; }
@@ -225,7 +227,10 @@ section + section { border-top: 1px solid var(--line); padding-top: 14px; }
 .chip { height: 28px; padding: 0 10px; background: transparent; border: 1px solid var(--line); border-radius: 14px; color: var(--muted); cursor: pointer; font-size: 13px; }
 .chip:hover:not(:disabled) { color: var(--text); border-color: var(--muted); }
 .chip:disabled { opacity: .45; cursor: default; }
-.composer { display: grid; gap: 8px; }
+.composer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.composer textarea { width: 100%; }
+.msg code { font-family: var(--num); font-size: 12.5px; background: var(--raised); padding: 1px 4px; border-radius: 3px; }
+.msg.user code { background: var(--chrome); }
 .panel#tab-assistant { gap: 10px; }
 
 .settings-list { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0 0; font-size: 13px; }
@@ -235,6 +240,7 @@ section + section { border-top: 1px solid var(--line); padding-top: 14px; }
 .source.test { color: var(--ok); }
 .setting-row { display: grid; grid-template-columns: 62px repeat(4, minmax(0, 1fr)); gap: 6px; align-items: center; margin-top: 6px; color: var(--text); }
 .setting-row input { height: 30px; width: 100%; }
+.setting-row.head { margin-top: 8px; font-size: 12px; color: var(--muted); }
 dialog .field > input[type="text"], dialog .field > textarea { width: 100%; color: var(--text); }
 dialog .field { color: var(--muted); }
 

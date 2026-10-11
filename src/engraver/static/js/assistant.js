@@ -153,9 +153,18 @@ async function applyActions(actions) {
 
 // --- chat -----------------------------------------------------------------------
 
+/** The two bits of Markdown models use anyway, as real elements. Everything else stays plain text. */
+function rich(text) {
+  return text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/).filter(Boolean).map((part) => {
+    if (part.length > 4 && part.startsWith("**") && part.endsWith("**")) return h("strong", {}, part.slice(2, -2));
+    if (part.length > 2 && part.startsWith("`") && part.endsWith("`")) return h("code", {}, part.slice(1, -1));
+    return part;
+  });
+}
+
 function bubble(message) {
   return h("div", { class: `msg ${message.role}${message.error ? " error" : ""}` },
-    message.content,
+    message.role === "assistant" && !message.error ? rich(message.content) : message.content,
     (message.notes || []).map((note) => h("span", { class: "did" }, note)),
     message.undoable && h("span", { class: "did" }, "Undo reverses these changes."));
 }

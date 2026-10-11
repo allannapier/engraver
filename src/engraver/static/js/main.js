@@ -291,11 +291,14 @@ function initKeys() {
 
 // --- connection and status ------------------------------------------------------------------
 
+let showAllPorts = false;
 async function refreshPorts() {
-  const { ports } = await api("/api/ports");
+  const { ports, hidden } = await api(`/api/ports${showAllPorts ? "?all=true" : ""}`);
   const select = $("port");
   const current = select.value;
   select.replaceChildren(...ports.map((p) => h("option", { value: p.device }, p.description && p.device !== "sim" ? `${p.device} (${p.description})` : p.description || p.device)));
+  // Built-in serial ports with nothing known about them are left out unless asked for.
+  if (hidden) select.append(h("option", { value: "__all__" }, `Show ${hidden} other port${hidden === 1 ? "" : "s"}…`));
   // Prefer what was chosen, then the first USB serial device, then the simulator.
   const usb = ports.find((p) => p.usb);
   select.value = ports.some((p) => p.device === current) ? current : usb ? usb.device : "sim";
@@ -306,17 +309,26 @@ const STATE_TEXT = { Disconnected: "Not connected", Connecting: "Connecting…",
 function initStatus() {
   $("port-refresh").append(icon("refresh"));
   $("port-refresh").addEventListener("click", act(refreshPorts));
+  $("port").addEventListener("change", act(async () => {
+    if ($("port").value !== "__all__") return;
+    showAllPorts = true;
+    await refreshPorts();
+  }));
   $("connect").addEventListener("click", act(async () => {
     if (state.status.connected || state.status.state === "Connecting") await post("/api/disconnect");
-    else await post("/api/connect", { port: $("port").value });
+    else if ($("port").value !== "__all__") await post("/api/connect", { port: $("port").value });
   }));
 
   let lastJob = "";
   on("status", () => {
     const s = state.status;
     const connected = s.connected;
-    $("machine-state").dataset.state = s.state;
-    $("state-text").textContent = STATE_TEXT[s.state] || s.state;
+    // "Laser running" is only true for a real job: a frame or a plain move isn't burning.
+    const burning = s.state === "Run" && jobActive() && s.job.kind === "job";
+    const framing = s.state === "Run" && jobActive() && s.job.kind === "frame";
+    const shown = s.state === "Run" && !burning ? "Jog" : s.state;
+    $("machine-state").dataset.state = shown;
+    $("state-text").textContent = framing ? "Framing" : STATE_TEXT[shown] || s.state;
     $("connect").textContent = connected || s.state === "Connecting" ? "Disconnect" : "Connect";
     $("port").disabled = connected || s.state === "Connecting";
     $("dro-x").textContent = connected ? s.wpos[0].toFixed(2) : "–";

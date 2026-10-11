@@ -7,6 +7,7 @@ on another site can't call the API and drive the laser.
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import time
 from collections import deque
@@ -233,8 +234,9 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
     # --- machine -------------------------------------------------------------
 
     @app.get("/api/ports")
-    def ports():
-        return {"ports": list_ports() + [{"device": SIM_PORT, "description": "Simulator (no laser needed)", "usb": False}]}
+    def ports(all: bool = False):
+        found, hidden = list_ports(show_all=all)
+        return {"ports": found + [{"device": SIM_PORT, "description": "Simulator (no laser needed)", "usb": False}], "hidden": hidden}
 
     @app.post("/api/connect")
     def connect(body: ConnectBody):
@@ -308,7 +310,11 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
         app.state.last_job = {**bugs.describe_job(body.job, result, "frame"), "frame_gcode": lines}
         b = result.bounds
         perimeter = 2 * ((b.max_x - b.min_x) + (b.max_y - b.min_y))
-        controller.start(lines, name="Frame", kind="frame", est_seconds=perimeter / profile.frame_feed * 60)
+        # The trip from the origin to the outline and (usually) back is often longer than the outline.
+        trips = 2 if body.job.finish == "origin" else 1
+        travel = math.hypot(b.min_x, b.min_y) * trips
+        est = perimeter / profile.frame_feed * 60 + travel / profile.travel_feed * 60 + 1
+        controller.start(lines, name="Frame", kind="frame", est_seconds=est)
         return result.summary()
 
     @app.post("/api/job/pause")
