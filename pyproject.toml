@@ -3,6 +3,17 @@ name = "engraver"
 version = "0.1.0"
 description = "Local browser app for designing and running jobs on a GRBL diode laser (Atomstack A10)"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Allan Napier" }]
+keywords = ["laser", "engraver", "grbl", "gcode", "atomstack"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics",
+]
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
@@ -17,6 +28,10 @@ dependencies = [
 
 [project.scripts]
 engraver = "engraver.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/allannapier/engraver"
+Issues = "https://github.com/allannapier/engraver/issues"
 
 [dependency-groups]
 dev = [
