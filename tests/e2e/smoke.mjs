@@ -1,0 +1,355 @@
+// End-to-end check of the browser app against the simulator.
+//
+//   ENGRAVER_SIM_SPEED=20 ENGRAVER_CONFIG=/tmp/engraver-e2e.json uv run engraver --no-browser --port 8642
+//   node tests/e2e/smoke.mjs            (needs `playwright` resolvable; set PLAYWRIGHT_PATH if it's elsewhere)
+//
+// Pass a directory as the first argument to also save screenshots there.
+
+import assert from "node:assert/strict";
+
+const { chromium } = await import(process.env.PLAYWRIGHT_PATH || "playwright");
+const BASE = process.env.ENGRAVER_URL || "http://127.0.0.1:8642";
+const shots = process.argv[2];
+
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+const errors = [];
+const fail = (text) => {
+  errors.push(text);
+  console.log(`  browser error: ${text}`);
+};
+// A refused request (off the bed, not connected) is logged by the browser; those are expected here.
+page.on("console", (m) => m.type() === "error" && !/status of (409|422)/.test(m.text()) && fail(m.text()));
+page.on("pageerror", (e) => fail(`pageerror: ${e.stack || e.message}`));
+
+const shot = async (name) => shots && page.screenshot({ path: `${shots}/${name}.png` });
+const step = (name) => console.log(`- ${name}`);
+const near = (a, b, tol = 0.15) => assert.ok(Math.abs(a - b) <= tol, `expected ${a} to be within ${tol} of ${b}`);
+const store = (fn, arg) => page.evaluate(async ([source, a]) => (0, eval)(`(${source})`)(await import("/js/store.js"), a), [fn.toString(), arg]);
+const preview = () => page.evaluate(async () => {
+  const { buildJob } = await import("/js/job.js");
+  const { post } = await import("/js/api.js");
+  const built = await buildJob("Test");
+  return { job: built.job, warnings: built.warnings, summary: await post("/api/job/preview", { job: built.job }) };
+});
+const gcode = () => page.evaluate(async () => {
+  const { buildJob } = await import("/js/job.js");
+  const { post } = await import("/js/api.js");
+  return post("/api/job/gcode", { job: (await buildJob("Test")).job });
+});
+const setProp = async (id, value) => {
+  await page.fill(`#prop-${id}`, String(value));
+  await page.press(`#prop-${id}`, "Enter");
+};
+const paste = (text) => page.evaluate((t) => {
+  const data = new DataTransfer();
+  data.setData("text/plain", t);
+  window.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data }));
+}, text);
+// waitForFunction needs a synchronous predicate, so the store module is parked on window after each load.
+const ready = async () => {
+  await page.waitForSelector(".layer");
+  await page.evaluate(async () => { window.__store = await import("/js/store.js"); });
+};
+const waitStatus = (fn, arg) => page.waitForFunction(([source, a]) => (0, eval)(`(${source})`)(window.__store.state.status, a), [fn.toString(), arg], { timeout: 20000 });
+
+await page.goto(BASE);
+await page.evaluate(() => localStorage.clear());
+await page.reload();
+await ready();
+await shot("01-empty");
+
+step("a rectangle goes where the property bar says, in machine coordinates");
+await page.click('[data-tool="rect"]');
+await page.click("#prop-lock"); // unlock proportions so width and height can be set separately
+await setProp("w", 50);
+await setProp("h", 30);
+await setProp("x", 10);
+await setProp("y", 20);
+let p = await preview();
+assert.equal(p.job.layers.length, 1);
+assert.equal(p.job.layers[0].mode, "line");
+assert.deepEqual(p.summary.bounds, [10, 20, 60, 50]);
+assert.equal(p.summary.burn_mm, 320); // 160 mm outline, two passes on the Cut layer
+
+step("rotating by 90 degrees swaps its footprint and keeps the corner pinned by X/Y");
+await setProp("rot", 90);
+await setProp("x", 10);
+await setProp("y", 20);
+p = await preview();
+p.summary.bounds.forEach((v, i) => near(v, [10, 20, 40, 70][i]));
+await setProp("rot", 0);
+
+step("dragging moves it; undo puts it back");
+const before = await store((s) => ({ ...s.state.doc.objects[0] }));
+const box = await page.locator(".obj .hit").first().boundingBox();
+await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+await page.mouse.down();
+await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 - 40, { steps: 5 });
+await page.mouse.up();
+const after = await store((s) => ({ ...s.state.doc.objects[0] }));
+assert.ok(after.x > before.x + 5 && after.y < before.y - 5, "object should have moved right and up");
+await page.keyboard.press("Control+z");
+const undone = await store((s) => ({ ...s.state.doc.objects[0] }));
+near(undone.x, before.x, 0.001);
+near(undone.y, before.y, 0.001);
+
+step("resizing from a corner handle keeps proportions when locked");
+await page.click("#prop-lock");
+const handle = await page.locator('[data-handle="4"]').boundingBox();
+await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+await page.mouse.down();
+await page.mouse.move(handle.x + 80, handle.y + 20, { steps: 5 });
+await page.mouse.up();
+const resized = await store((s) => ({ ...s.state.doc.objects[0] }));
+assert.ok(resized.w > 55, "should be wider");
+near(resized.w / resized.h, 50 / 30, 0.01);
+near(resized.x, undone.x, 0.01); // opposite corner stayed put
+near(resized.y, undone.y, 0.01);
+await page.keyboard.press("Control+z");
+
+step("pasted SVG is sanitised, cropped to its artwork and traced accurately");
+await paste(`<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100" onload="window.__pwned=1">
+  <script>window.__pwned = 1</script>
+  <style>.c { fill: none; stroke: #000 }</style>
+  <foreignObject><div>x</div></foreignObject>
+  <defs><circle id="dot" r="5"/></defs>
+  <circle class="c" cx="50" cy="50" r="20" onclick="window.__pwned=1"/>
+  <path d="M30 50a20 20 0 0140 0" fill="none" stroke="#000"/>
+  <use href="#dot" x="50" y="50"/>
+  <image href="https://example.com/track.png" width="10" height="10"/>
+</svg>`);
+await page.waitForFunction(() => document.querySelectorAll(".obj").length === 2);
+assert.equal(await page.evaluate(() => window.__pwned), undefined);
+assert.equal(await page.evaluate(() => document.querySelectorAll("#stage script, #stage foreignObject, #stage style, #stage [onclick], #stage image").length), 0);
+const circle = await store((s) => ({ ...s.state.doc.objects[1] }));
+near(circle.w, 40, 0.01); // 100 mm page, r=20 circle: cropped to 40 mm
+near(circle.h, 40, 0.01);
+assert.equal(await page.evaluate(() => getComputedStyle(document.querySelectorAll(".obj")[1].querySelector('circle[cx="50"]')).fill), "none", "class rule was inlined");
+// Move it to the Cut layer and measure the traced geometry.
+await page.selectOption("#prop-layer", { label: "Cut" });
+await setProp("x", 100);
+await setProp("y", 100);
+p = await preview();
+const traced = p.job.layers[0].polylines.slice(1); // [0] is the rectangle
+assert.equal(traced.length, 3, "circle, arc and the <use> copy");
+const length = (line) => line.slice(1).reduce((sum, pt, i) => sum + Math.hypot(pt[0] - line[i][0], pt[1] - line[i][1]), 0);
+near(length(traced[0]), 2 * Math.PI * 20, 0.05);
+near(length(traced[1]), Math.PI * 20, 0.05);
+near(length(traced[2]), 2 * Math.PI * 5, 0.05);
+const xs = traced[0].map((pt) => pt[0]), ys = traced[0].map((pt) => pt[1]);
+near(Math.min(...xs), 100, 0.02);
+near(Math.max(...xs), 140, 0.02);
+near(400 - Math.max(...ys), 100, 0.02); // front edge is 100 mm from the bed's front
+await shot("02-vector");
+
+step("text engraves as a fill layer and lands where it is drawn");
+await page.click('[data-tool="text"]');
+await page.fill("dialog textarea", "Scooby\nDoos");
+await page.click('dialog button[value="ok"]');
+await page.waitForFunction(() => document.querySelectorAll(".obj").length === 3);
+await setProp("x", 200);
+await setProp("y", 250);
+const text = await store((s) => ({ ...s.state.doc.objects[2] }));
+p = await preview();
+const fill = p.job.layers.find((l) => l.mode === "fill");
+assert.ok(fill && fill.raster.png.startsWith("data:image/png"), "fill layer carries a bitmap");
+const code = await gcode();
+const fillPart = code.split("M4 S0")[1];
+const burnXs = [...fillPart.matchAll(/G1 X([\d.]+)[^\n]*S(\d+)/g)].filter((m) => Number(m[2]) > 0).map((m) => Number(m[1]));
+const burnYs = [...fillPart.matchAll(/G0 X[\d.]+ Y([\d.]+)/g)].map((m) => Number(m[1]));
+assert.ok(burnXs.length > 50, "text produces many scan segments");
+// The measured box includes the font's line spacing, so ink sits inside it.
+assert.ok(Math.min(...burnXs) >= 200 - 0.5 && Math.max(...burnXs) <= 200 + text.w + 0.5, "ink stays inside the text box horizontally");
+assert.ok(Math.min(...burnYs) >= 250 - 0.5 && Math.max(...burnYs) <= 250 + text.h + 0.5, "ink stays inside the text box vertically");
+assert.ok(Math.max(...burnXs) - Math.min(...burnXs) > text.w * 0.8, "ink spans most of the box width");
+
+step("text on a line layer is skipped with an explanation");
+await page.selectOption("#prop-layer", { label: "Cut" });
+p = await preview();
+assert.ok(p.warnings.some((w) => w.includes("text can't be traced")), "warns about text");
+await page.selectOption("#prop-layer", { label: "Engrave" });
+
+step("a design off the bed is refused in bed-position mode");
+await setProp("x", 400);
+await assert.rejects(preview(), /off the bed/);
+await setProp("x", 200);
+
+step("layer settings reach the G-code");
+const speed = page.locator('[data-field="speed"]').nth(1);
+await speed.fill("450");
+await speed.press("Enter");
+const power = page.locator('[data-field="power"]').nth(1);
+await power.fill("75");
+await power.press("Enter");
+const passes = page.locator('[data-field="passes"]').nth(1);
+await passes.fill("3");
+await passes.press("Enter");
+const cutCode = (await gcode()).split("M4 S0")[2];
+assert.ok(cutCode.includes("S750") && cutCode.includes("F450"), "cut layer uses 75% and 450 mm/min");
+await passes.fill("1");
+await passes.press("Enter");
+const onePass = (await gcode()).split("M4 S0")[2];
+assert.equal(cutCode.match(/G1 /g).length, 3 * onePass.match(/G1 /g).length, "three passes cut everything three times");
+
+step("material presets fill in a layer");
+await page.selectOption("#material", "plywood-3");
+await page.locator(".layer").nth(1).locator('select[aria-label="Use a preset"]').selectOption("cut");
+const cut = await store((s) => ({ ...s.state.doc.layers[1] }));
+assert.deepEqual([cut.speed, cut.power, cut.passes, cut.mode], [300, 100, 2, "line"]);
+
+step("connect to the simulator, jog and set the origin");
+await page.click('[data-tab="laser"]');
+await page.selectOption("#port", "sim");
+await page.click("#connect");
+await waitStatus((s) => s.connected && s.state === "Idle" && s.settings["30"]);
+assert.equal(await page.textContent("#state-text"), "Ready");
+await page.click('button[aria-label="Move right"]');
+await page.click('button[aria-label="Move back"]');
+await waitStatus((s) => s.wpos[0] === 10 && s.wpos[1] === 10 && s.state === "Idle");
+assert.equal(await page.textContent("#dro-x"), "10.00");
+await page.getByRole("button", { name: "Set origin here" }).click();
+await waitStatus((s) => s.wpos[0] === 0 && s.wco[0] === 10);
+await page.getByRole("button", { name: "Clear" }).click();
+await waitStatus((s) => s.wco[0] === 0 && s.wpos[0] === 10);
+await page.getByRole("button", { name: "Go to origin" }).click();
+await waitStatus((s) => s.wpos[0] === 0 && s.wpos[1] === 0 && s.state === "Idle");
+await shot("03-laser-tab");
+
+step("frame traces the job outline");
+await page.click("#job-frame");
+await waitStatus((s) => s.job && s.job.kind === "frame" && s.job.state === "done");
+
+step("start asks first, then runs to the end");
+await page.click("#job-start");
+await page.waitForSelector("dialog[open]");
+assert.match(await page.textContent("dialog"), /Start burning\?/);
+await shot("04-confirm");
+await page.click('dialog button[value=""]');
+assert.equal(await store((s) => s.state.status.job.kind), "frame", "cancelling starts nothing");
+await page.click("#job-start");
+await page.click('dialog button[value="go"]');
+await waitStatus((s) => s.job.kind === "job" && s.job.state === "running");
+await page.waitForFunction(() => document.querySelector(".jobbar").dataset.live === "true");
+await shot("05-running");
+
+step("pause, resume and stop");
+await page.click("#job-pause");
+await waitStatus((s) => s.state === "Hold" && s.job.state === "paused");
+assert.equal(await page.textContent("#job-pause"), "Resume");
+assert.equal(await page.textContent("#state-text"), "Paused");
+await page.click("#job-pause");
+await waitStatus((s) => s.state === "Run");
+await page.click("#job-stop");
+await waitStatus((s) => s.job.state === "stopped" && s.state === "Idle");
+assert.equal(await page.isDisabled("#job-start"), false, "ready to go again after a stop");
+
+step("a short job runs to completion");
+await store((s) => {
+  s.state.doc.objects = s.state.doc.objects.slice(0, 1);
+  s.commit();
+});
+await page.click("#job-start");
+await page.click('dialog button[value="go"]');
+await waitStatus((s) => s.job.kind === "job" && s.job.state === "done");
+assert.equal(await page.getAttribute("#job-bar", "aria-valuenow"), "100");
+assert.match(await page.textContent("#job-title"), /finished/);
+
+step("the assistant's reply changes the canvas and the layers");
+await page.route("**/api/state", async (route) => {
+  const response = await route.fetch();
+  const body = await response.json();
+  body.config.llm.model = "test/model";
+  await route.fulfill({ response, json: body });
+});
+let asked;
+await page.route("**/api/ai/chat", async (route) => {
+  asked = route.request().postDataJSON();
+  await route.fulfill({
+    json: {
+      text: "Here's a star for the coaster, with plywood settings.",
+      actions: [
+        { type: "add_design", name: "Star", mode: "fill", width_mm: 60, x_mm: 300, y_mm: 40,
+          svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><polygon points="50,5 61,38 96,38 68,59 79,93 50,72 21,93 32,59 4,38 39,38" fill="#000"/></svg>' },
+        { type: "set_layer", layer_id: asked.context.layers[0].id, speed: 5000, power: 55 },
+        { type: "set_layer", layer_id: "nope", speed: 1 },
+      ],
+    },
+  });
+});
+await page.reload();
+await ready();
+await page.click('[data-tab="assistant"]');
+await page.fill("#tab-assistant textarea", "Make a star for a plywood coaster");
+await page.press("#tab-assistant textarea", "Enter");
+await page.waitForSelector(".msg.assistant:not(.thinking)");
+assert.equal(asked.messages.at(-1).content, "Make a star for a plywood coaster");
+assert.equal(asked.context.material, "Plywood (basswood/birch), 3 mm");
+assert.ok(asked.image.startsWith("data:image/png"), "a picture of the canvas is sent");
+const star = await store((s) => {
+  const o = s.state.doc.objects.at(-1);
+  return { ...o, layer: s.layerById(o.layerId) };
+});
+assert.equal(star.name, "Star");
+near(star.w, 60, 0.01);
+near(star.x, 300, 0.01);
+near(400 - (star.y + star.h), 40, 0.01);
+assert.deepEqual([star.layer.mode, star.layer.speed, star.layer.power], ["fill", 5000, 55]);
+const notes = await page.locator(".msg.assistant .did").allTextContents();
+assert.ok(notes.some((n) => n.startsWith('Added "Star"')) && notes.some((n) => n.startsWith("Skipped one change")), notes.join(" | "));
+await shot("06-assistant");
+await page.keyboard.press("Escape");
+await page.locator("#stage").focus();
+await page.keyboard.press("Control+z");
+assert.equal(await store((s) => s.state.doc.objects.length), 1, "one undo reverses the whole reply");
+
+step("settings are saved from Setup");
+await page.unroute("**/api/state");
+await page.click('[data-tab="setup"]');
+await page.fill('[data-machine="bed_w"]', "400");
+await page.getByRole("button", { name: "Save machine" }).click();
+await page.waitForFunction(() => window.__store.state.machine.bed_w === 400);
+await page.fill('[data-machine="bed_w"]', "410");
+await page.getByRole("button", { name: "Save machine" }).click();
+await page.waitForFunction(() => window.__store.state.machine.bed_w === 410);
+await shot("07-setup");
+
+step("a hostile project file is cleaned on open");
+await page.setInputFiles("#file-project", {
+  name: "bad.engraver.json",
+  mimeType: "application/json",
+  buffer: Buffer.from(JSON.stringify({
+    format: "engraver-project",
+    doc: {
+      layers: [{ id: "L1", name: "Cut", mode: "line", color: "red;background:url(https://example.com/x)", speed: "fast", power: 900, passes: 0 }],
+      objects: [
+        { id: "a", layerId: "L1", vb: [0, 0, 10, 10], w: 20, h: 20, x: 5, y: 5,
+          svg: '<rect width="10" height="10" onclick="window.__pwned=2"/><script>window.__pwned=2</script><image href="https://example.com/t.png" width="1" height="1"/>' },
+        { id: "b", layerId: "nope", vb: [0, 0, 0, 10], svg: "<rect/>" },
+        { nonsense: true },
+      ],
+    },
+  })),
+});
+await page.waitForFunction(() => window.__store.state.doc.layers[0].id === "L1");
+const opened = await store((s) => s.state.doc);
+assert.equal(opened.objects.length, 1, "malformed objects are dropped");
+assert.equal(opened.objects[0].svg, '<rect width="10" height="10"/>');
+assert.deepEqual([opened.layers[0].speed, opened.layers[0].power, opened.layers[0].passes], [1000, 100, 1]);
+assert.match(opened.layers[0].color, /^#[0-9a-f]{6}$/);
+assert.equal(await page.evaluate(() => window.__pwned), undefined);
+await page.locator("#stage").focus();
+await page.keyboard.press("Control+z");
+assert.equal(await store((s) => s.state.doc.objects[0].kind), "shape", "opening a project is undoable");
+
+step("the project survives a reload");
+await page.reload();
+await ready();
+await page.waitForSelector(".obj");
+assert.equal(await store((s) => s.state.doc.objects.length), 1);
+
+await page.click("#connect");
+await waitStatus((s) => !s.connected);
+await browser.close();
+assert.deepEqual(errors, [], "no console errors");
+console.log("ok");

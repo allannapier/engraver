@@ -1,0 +1,234 @@
+"""HTTP API: request guard, config, jobs through the simulator, assistant with a fake provider."""
+
+import json
+import time
+from types import SimpleNamespace
+
+import pytest
+from fastapi.testclient import TestClient
+
+from engraver.app import create_app
+from engraver.config import ConfigStore
+
+
+@pytest.fixture
+def client(tmp_path):
+    store = ConfigStore(tmp_path / "config.json")
+    app = create_app(store=store, sim_speed=80, extra_hosts=("testserver",))
+    with TestClient(app) as c:
+        c.store = store
+        yield c
+
+
+def wait_for(client, predicate, timeout=6.0):
+    deadline = time.monotonic() + timeout
+    status = None
+    while time.monotonic() < deadline:
+        status = client.get("/api/state").json()["status"]
+        if predicate(status):
+            return status
+        time.sleep(0.03)
+    raise AssertionError(f"timed out; last status {status}")
+
+
+def connect(client):
+    assert client.post("/api/connect", json={"port": "sim"}).status_code == 200
+    wait_for(client, lambda s: s["connected"] and "30" in s["settings"])
+
+
+SQUARE = {"layers": [{"name": "Cut", "mode": "line", "speed": 1200, "power": 60,
+                      "polylines": [[[10, 10], [30, 10], [30, 30], [10, 30], [10, 10]]]}]}
+
+
+def test_requests_from_other_sites_are_refused(client):
+    assert client.get("/api/state").status_code == 200
+    assert client.get("/api/state", headers={"host": "evil.example"}).status_code == 403
+    assert client.post("/api/job/stop", headers={"origin": "https://evil.example"}).status_code == 403
+    assert client.post("/api/job/stop", headers={"origin": "null"}).status_code == 403
+    assert client.post("/api/job/stop", headers={"origin": "http://testserver"}).status_code == 200
+
+
+def test_static_app_is_served(client):
+    assert client.get("/").status_code == 200
+
+
+def test_config_round_trip_never_returns_the_key(client):
+    r = client.put("/api/config", json={"llm": {"model": "anthropic/claude-sonnet-5-5", "api_key": "sk-secret-1234"},
+                                        "machine": {"bed_w": 400}})
+    cfg = r.json()["config"]
+    assert "api_key" not in cfg["llm"] and cfg["llm"]["api_key_set"] and cfg["llm"]["api_key_hint"] == "…1234"
+    assert cfg["machine"]["bed_w"] == 400
+    assert "sk-secret-1234" not in client.get("/api/state").text
+    # Saving again without a key keeps the stored one.
+    client.put("/api/config", json={"llm": {"model": "openai/gpt-x", "api_key": ""}})
+    assert client.store.settings.llm.api_key == "sk-secret-1234"
+    assert json.loads(client.store.path.read_text())["llm"]["model"] == "openai/gpt-x"
+    client.put("/api/config", json={"llm": {"clear_api_key": True}})
+    assert client.store.settings.llm.api_key == ""
+    assert client.put("/api/config", json={"machine": {"bed_w": "wide"}}).status_code == 422
+
+
+def test_machine_actions_need_a_connection(client):
+    r = client.post("/api/jog", json={"dx": 10})
+    assert r.status_code == 409 and "Not connected" in r.json()["detail"]
+    assert client.post("/api/job/start", json={"job": SQUARE}).status_code == 409
+
+
+def test_preview_and_export(client):
+    summary = client.post("/api/job/preview", json={"job": SQUARE}).json()
+    assert summary["width"] == 20 and summary["height"] == 20 and summary["burn_mm"] == 80
+    gcode = client.post("/api/job/gcode", json={"job": SQUARE}).text
+    assert gcode.startswith("G21\nG90") and "S600" in gcode
+    r = client.post("/api/job/preview", json={"job": {"layers": []}})
+    assert r.status_code == 422 and "Nothing to burn" in r.json()["detail"]
+
+
+def test_frame_then_run_a_job(client):
+    connect(client)
+    assert client.post("/api/job/frame", json={"job": SQUARE}).status_code == 200
+    status = wait_for(client, lambda s: s["job"] and s["job"]["state"] == "done")
+    assert status["job"]["kind"] == "frame"
+    assert client.post("/api/job/start", json={"job": SQUARE}).status_code == 200
+    status = wait_for(client, lambda s: s["job"]["kind"] == "job" and s["job"]["state"] == "done")
+    assert status["job"]["acked"] == status["job"]["total"]
+    assert status["wpos"] == [0, 0]
+    sim = client.app.state.controller._transport
+    assert len(sim.burns) == 4 and all(b[4] == 600 for b in sim.burns)
+
+
+def test_power_uses_the_controllers_s_max(client):
+    connect(client)
+    client.post("/api/command", json={"line": "$30=255"})
+    client.post("/api/command", json={"line": "$$"})
+    wait_for(client, lambda s: s["settings"].get("30") == 255)
+    gcode = client.post("/api/job/gcode", json={"job": SQUARE}).text
+    assert "S153" in gcode and "S600" not in gcode
+
+
+def test_job_is_refused_when_laser_mode_is_off(client):
+    connect(client)
+    client.post("/api/command", json={"line": "$32=0"})
+    client.post("/api/command", json={"line": "$$"})
+    wait_for(client, lambda s: s["settings"].get("32") == 0)
+    r = client.post("/api/job/start", json={"job": SQUARE})
+    assert r.status_code == 409 and "$32=1" in r.json()["detail"]
+
+
+def test_pause_resume_stop_over_http(client):
+    connect(client)
+    client.app.state.controller._transport.speed = 1
+    big = {"layers": [{"mode": "line", "speed": 600, "power": 50, "polylines": [[[0, 0], [300, 0], [300, 300]]]}]}
+    assert client.post("/api/job/start", json={"job": big}).status_code == 200
+    wait_for(client, lambda s: s["state"] == "Run")
+    assert client.post("/api/job/pause").status_code == 200
+    wait_for(client, lambda s: s["state"] == "Hold" and s["job"]["state"] == "paused")
+    assert client.post("/api/job/resume").status_code == 200
+    wait_for(client, lambda s: s["state"] == "Run")
+    assert client.post("/api/job/stop").status_code == 200
+    wait_for(client, lambda s: s["job"]["state"] == "stopped" and s["state"] == "Idle")
+
+
+def test_live_updates_over_websocket(client):
+    with client.websocket_connect("/ws") as ws:
+        first = ws.receive_json()
+        assert first["type"] == "status" and first["status"]["connected"] is False
+        connect(client)
+        seen = set()
+        for _ in range(40):
+            event = ws.receive_json()
+            seen.add(event["type"])
+            if event["type"] == "status" and event["status"]["connected"]:
+                break
+        assert {"status", "log"} <= seen
+
+
+# --- assistant ---------------------------------------------------------------
+
+
+def fake_response(text="", tool_calls=()):
+    calls = [SimpleNamespace(function=SimpleNamespace(name=name, arguments=json.dumps(args))) for name, args in tool_calls]
+    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text, tool_calls=calls or None))])
+
+
+def test_assistant_needs_a_model(client):
+    r = client.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert r.status_code == 400 and "Setup" in r.json()["detail"]
+
+
+def test_assistant_returns_actions_and_sees_context(client):
+    client.put("/api/config", json={"llm": {"model": "test/model", "api_key": "sk-abcdefgh"}})
+    calls = []
+
+    async def completion(**kwargs):
+        calls.append(kwargs)
+        return fake_response("Added a star on the engrave layer.", [
+            ("add_design", {"name": "Star", "svg": "<svg xmlns='http://www.w3.org/2000/svg'/>", "width_mm": 60, "mode": "fill"}),
+            ("set_layer", {"layer_id": "L1", "speed": 6000, "power": 50}),
+            ("fire_laser", {"power": 100}),
+        ])
+
+    client.app.state.completion = completion
+    body = {
+        "messages": [{"role": "user", "content": "make a star for 3mm plywood"}],
+        "context": {"layers": [{"id": "L1", "mode": "fill"}], "objects": []},
+        "image": "data:image/png;base64,AAAA",
+    }
+    reply = client.post("/api/ai/chat", json=body).json()
+    assert reply["text"].startswith("Added a star")
+    assert [a["type"] for a in reply["actions"]] == ["add_design", "set_layer"]  # unknown tools are dropped
+    sent = calls[0]
+    assert sent["model"] == "test/model" and sent["api_key"] == "sk-abcdefgh"
+    names = {tool["function"]["name"] for tool in sent["tools"]}
+    assert names == {"add_design", "replace_design", "transform_design", "add_layer", "set_layer"}
+    system = sent["messages"][0]["content"]
+    assert "Plywood" in system and "PVC" in system and "cannot move the laser head" in system
+    user = sent["messages"][-1]["content"]
+    assert user[1]["type"] == "image_url" and '"layers"' in user[0]["text"]
+
+
+def test_assistant_falls_back_when_the_model_rejects_tools(client):
+    client.put("/api/config", json={"llm": {"model": "ollama/tiny", "vision": True}})
+    attempts = []
+
+    class BadRequestError(Exception):
+        pass
+
+    async def completion(**kwargs):
+        has_image = isinstance(kwargs["messages"][-1]["content"], list)
+        attempts.append(("tools" in kwargs, has_image))
+        if "tools" in kwargs:
+            raise BadRequestError("this model does not support tools")
+        return fake_response("Here you go.\n```svg\n<svg viewBox='0 0 10 10'><circle cx='5' cy='5' r='4'/></svg>\n```")
+
+    client.app.state.completion = completion
+    body = {"messages": [{"role": "user", "content": "circle"}], "context": {"selected": {"id": "o7", "svg": "<svg/>"}},
+            "image": "data:image/png;base64,AAAA"}
+    reply = client.post("/api/ai/chat", json=body).json()
+    assert attempts == [(True, True), (True, False), (False, False)]
+    assert reply["actions"] == [{"type": "replace_design", "design_id": "o7",
+                                 "svg": "<svg viewBox='0 0 10 10'><circle cx='5' cy='5' r='4'/></svg>"}]
+    assert reply["text"] == "Here you go."
+
+
+def test_assistant_errors_are_readable_and_hide_the_key(client):
+    client.put("/api/config", json={"llm": {"model": "x/y", "api_key": "sk-supersecret"}})
+
+    class AuthenticationError(Exception):
+        pass
+
+    class APIError(Exception):
+        pass
+
+    async def bad_key(**kwargs):
+        raise AuthenticationError("invalid key sk-supersecret")
+
+    client.app.state.completion = bad_key
+    r = client.post("/api/ai/test")
+    assert r.status_code == 400 and "rejected the API key" in r.json()["detail"]
+
+    async def boom(**kwargs):
+        raise APIError("upstream said no to sk-supersecret")
+
+    client.app.state.completion = boom
+    r = client.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert r.status_code == 400 and "sk-supersecret" not in r.text and "upstream said no" in r.text
