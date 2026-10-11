@@ -232,3 +232,73 @@ def test_assistant_errors_are_readable_and_hide_the_key(client):
     client.app.state.completion = boom
     r = client.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]})
     assert r.status_code == 400 and "sk-supersecret" not in r.text and "upstream said no" in r.text
+
+
+# --- material library ----------------------------------------------------------
+
+PLY = {
+    "id": "my-birch-ply-3mm", "name": "Birch ply 3 mm", "notes": "From the hobby shop, slightly warped",
+    "engrave": {"mode": "fill", "speed": 4000, "power": 55, "passes": 1, "interval": 0.1, "source": "test", "date": "2026-10-11"},
+    "cut": {"mode": "line", "speed": 250, "power": 100, "passes": 2, "source": "saved", "date": "2026-10-11"},
+}
+
+
+def test_library_saves_updates_and_deletes(client, tmp_path):
+    assert client.get("/api/state").json()["library"] == []
+    r = client.put(f"/api/library/{PLY['id']}", json=PLY)
+    assert r.status_code == 200
+    saved = r.json()["library"][0]
+    assert saved["name"] == "Birch ply 3 mm" and saved["engrave"]["speed"] == 4000 and saved["score"] is None
+    assert (tmp_path / "materials.json").exists()
+
+    # It survives a restart: a new app reading the same folder sees it.
+    again = create_app(store=ConfigStore(tmp_path / "config.json"), extra_hosts=("testserver",))
+    with TestClient(again) as other:
+        assert other.get("/api/state").json()["library"][0]["cut"]["passes"] == 2
+
+    updated = {**PLY, "cut": {**PLY["cut"], "speed": 300}}
+    assert client.put(f"/api/library/{PLY['id']}", json=updated).json()["library"][0]["cut"]["speed"] == 300
+    assert len(client.get("/api/state").json()["library"]) == 1
+    assert client.delete(f"/api/library/{PLY['id']}").json()["library"] == []
+
+
+def test_library_rejects_bad_entries(client):
+    assert client.put("/api/library/my-x", json={**PLY, "id": "my-other"}).status_code == 422
+    assert client.put("/api/library/plywood-3", json={**PLY, "id": "plywood-3"}).status_code == 422  # built-in ids are off limits
+    too_hot = {**PLY, "engrave": {**PLY["engrave"], "power": 140}}
+    assert client.put(f"/api/library/{PLY['id']}", json=too_hot).status_code == 422
+    assert client.put(f"/api/library/{PLY['id']}", json=PLY).status_code == 200
+    r = client.put("/api/library/my-second", json={**PLY, "id": "my-second", "name": "birch PLY 3 mm"})
+    assert r.status_code == 409 and "already have" in r.json()["detail"]
+
+
+def test_a_damaged_library_file_does_not_break_startup(tmp_path):
+    (tmp_path / "materials.json").write_text('{"materials": [{"id": "nope"}, ' + json.dumps(PLY) + "]}")
+    app = create_app(store=ConfigStore(tmp_path / "config.json"), extra_hosts=("testserver",))
+    with TestClient(app) as c:
+        assert [m["id"] for m in c.get("/api/state").json()["library"]] == [PLY["id"]]
+    (tmp_path / "materials.json").write_text("not json")
+    app = create_app(store=ConfigStore(tmp_path / "config.json"), extra_hosts=("testserver",))
+    with TestClient(app) as c:
+        assert c.get("/api/state").json()["library"] == []
+
+
+def test_assistant_is_told_about_the_persons_own_materials(client):
+    client.put("/api/config", json={"llm": {"model": "test/model"}})
+    seen = []
+
+    async def completion(**kwargs):
+        seen.append(kwargs["messages"][0]["content"])
+        return fake_response("ok")
+
+    client.app.state.completion = completion
+    ask = {"messages": [{"role": "user", "content": "settings for my ply?"}]}
+    client.post("/api/ai/chat", json=ask)
+    assert "hasn't saved any materials" in seen[0]
+    client.put(f"/api/library/{PLY['id']}", json=PLY)
+    client.post("/api/ai/chat", json=ask)
+    prompt = seen[1]
+    assert "Birch ply 3 mm: engrave fill 4000 mm/min 55% x1, interval 0.1 mm (picked from a test grid on 2026-10-11)" in prompt
+    assert "cut line 250 mm/min 100% x2 (saved by the person on 2026-10-11)" in prompt
+    assert "slightly warped" in prompt and "take priority" in prompt
+    assert prompt.index("Birch ply 3 mm") < prompt.index("Plywood (basswood/birch), 3 mm")

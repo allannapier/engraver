@@ -194,6 +194,9 @@ function measure(markup, viewBox) {
   return box;
 }
 
+/** Bounding box [x, y, w, h] of some SVG markup as the browser lays it out, or null if it draws nothing. */
+export const measureMarkup = (markup) => measure(markup, null);
+
 const UNIT_MM = { mm: 1, cm: 10, in: 25.4, pt: 25.4 / 72, pc: 25.4 / 6, px: 25.4 / 96, "": 25.4 / 96 };
 function lengthMm(value) {
   const match = /^\s*([\d.eE+-]+)\s*(mm|cm|in|pt|pc|px)?\s*$/.exec(value || "");

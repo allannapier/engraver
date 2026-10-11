@@ -24,6 +24,8 @@ from .config import ConfigStore
 from .gcode import JobError, JobSpec, MachineProfile, build_job, frame_gcode
 from .grbl.controller import GrblController, MachineError, list_ports
 from .grbl.simulator import GrblSim
+from .library import LibraryError, MaterialLibrary, UserMaterial
+from .library import default_path as library_path
 from .materials import MATERIALS, NEVER
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -110,6 +112,7 @@ async def _until_closed(socket: WebSocket) -> None:
 
 def create_app(store: ConfigStore | None = None, sim_speed: float | None = None, extra_hosts: tuple[str, ...] = ()) -> FastAPI:
     store = store or ConfigStore()
+    library = MaterialLibrary(library_path(store.path))
     hub = Hub()
     controller = GrblController(on_event=hub.publish)
     allowed_hosts = LOCAL_HOSTS | set(extra_hosts)
@@ -127,6 +130,7 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
     app.state.controller = controller
     app.state.store = store
     app.state.hub = hub
+    app.state.library = library
     app.state.completion = None  # tests swap in a fake provider here
 
     @app.middleware("http")
@@ -145,6 +149,10 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
     @app.exception_handler(JobError)
     async def job_error(request: Request, exc: JobError):
         return JSONResponse({"detail": str(exc)}, status_code=422)
+
+    @app.exception_handler(LibraryError)
+    async def library_error(request: Request, exc: LibraryError):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
 
     @app.exception_handler(llm.AssistantError)
     async def assistant_error(request: Request, exc: llm.AssistantError):
@@ -182,9 +190,24 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
             "config": store.public(),
             "machine": machine().model_dump(),
             "materials": MATERIALS,
+            "library": library.all(),
             "never": NEVER,
             "log": list(hub.log),
         }
+
+    # --- the person's own materials --------------------------------------------
+
+    @app.put("/api/library/{material_id}")
+    def put_material(material_id: str, material: UserMaterial):
+        if material.id != material_id:
+            raise HTTPException(422, "The material's id doesn't match the address it was sent to.")
+        library.put(material)
+        return {"library": library.all()}
+
+    @app.delete("/api/library/{material_id}")
+    def delete_material(material_id: str):
+        library.delete(material_id)
+        return {"library": library.all()}
 
     @app.put("/api/config")
     def put_config(patch: dict):
@@ -293,7 +316,8 @@ def create_app(store: ConfigStore | None = None, sim_speed: float | None = None,
     @app.post("/api/ai/chat")
     async def ai_chat(body: ChatBody):
         return await llm.chat(
-            store.settings.llm, machine(), body.messages, body.context, body.image, completion=app.state.completion
+            store.settings.llm, machine(), body.messages, body.context, body.image,
+            completion=app.state.completion, library=library.as_prompt(),
         )
 
     @app.post("/api/ai/test")

@@ -17,9 +17,12 @@ Local browser app that drives a GRBL diode laser (Atomstack A10). Python/FastAPI
 - Every SVG that enters the page goes through `sanitizeSvg` or `sanitizeMarkup` (imports, pastes, assistant output, project files, saved state).
 - Power is scaled by the controller's `$30`, not the saved profile, when connected.
 - Frame's visible dot is capped at 2 % in `gcode.frame_gcode`.
+- The built-in table in `materials.py` is never modified at runtime. Saving against a built-in material copies it into the person's library (`library.py`, ids start with `my-`).
+- The assistant reads the material library but has no tool to write to it: entries are things the person saved or picked from a burned test.
 
 ## Conventions
 
+- The material test (`static/js/testgrid.js`) is an ordinary job with one layer per square, built in the browser and run in origin mode. Keep it that way rather than adding a server-side generator.
 - Canvas coordinates are mm, origin top-left, Y down. Machine coordinates are origin front-left, Y away. The flip happens once, in `gcode.build_job`. Anything shown to the user or the assistant uses machine coordinates.
 - Speeds are mm/min, power is percent.
 - An object is SVG markup plus a viewBox, scaled into `x, y, w, h` and rotated about its centre. Geometry is never rewritten; tracing reads the live DOM.
