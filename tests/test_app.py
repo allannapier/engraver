@@ -302,3 +302,39 @@ def test_assistant_is_told_about_the_persons_own_materials(client):
     assert "cut line 250 mm/min 100% x2 (saved by the person on 2026-10-11)" in prompt
     assert "slightly warped" in prompt and "take priority" in prompt
     assert prompt.index("Birch ply 3 mm") < prompt.index("Plywood (basswood/birch), 3 mm")
+
+
+# --- found while trying the app in a real browser ---------------------------------
+
+
+def test_port_list_hides_ports_with_no_hardware_behind_them(client, monkeypatch):
+    port = SimpleNamespace
+    found = [
+        port(device="/dev/ttyS0", description="n/a", hwid="n/a", vid=None),  # Linux lists 32 of these regardless
+        port(device="/dev/ttyS1", description="n/a", hwid="n/a", vid=None),
+        port(device="/dev/ttyUSB0", description="USB Serial", hwid="USB VID:PID=1A86:7523", vid=0x1A86),
+        port(device="/dev/ttyAMA0", description="ttyAMA0", hwid="fe201000.serial", vid=None),  # a real on-board UART
+    ]
+    monkeypatch.setattr("serial.tools.list_ports.comports", lambda: found)
+    listing = client.get("/api/ports").json()
+    assert [p["device"] for p in listing["ports"]] == ["/dev/ttyUSB0", "/dev/ttyAMA0", "sim"]
+    assert listing["hidden"] == 2
+    everything = client.get("/api/ports?all=true").json()
+    assert [p["device"] for p in everything["ports"]] == ["/dev/ttyUSB0", "/dev/ttyAMA0", "/dev/ttyS0", "/dev/ttyS1", "sim"]
+    assert everything["hidden"] == 0
+
+
+def test_frame_estimate_counts_the_trip_there_and_back(client):
+    connect(client)
+    client.app.state.controller._transport.speed = 1
+    client.post("/api/job/frame", json={"job": SQUARE})
+    est = wait_for(client, lambda s: s["job"] and s["job"]["kind"] == "frame")["job"]["est_seconds"]
+    # 80 mm of outline at 3000 mm/min is 1.6 s; the 370 mm trip each way at 6000 mm/min is 7.4 s more.
+    assert 9.5 < est < 11
+    stay = {**SQUARE, "finish": "stay"}
+    client.post("/api/job/stop")
+    wait_for(client, lambda s: s["state"] == "Idle" and s["job"]["state"] in ("stopped", "done"))
+    client.post("/api/job/frame", json={"job": stay})
+    est = wait_for(client, lambda s: s["job"]["state"] == "running")["job"]["est_seconds"]
+    assert 5.5 < est < 7
+    client.post("/api/job/stop")

@@ -168,7 +168,7 @@ async function materialDialog(existing) {
   const inputs = {};
   const rows = OPS.map(([op, label, mode]) => {
     const s = existing?.[op];
-    const field = (key, placeholder, attrs) => (inputs[`${op}.${key}`] = h("input", { type: "number", value: s?.[key] ?? "", placeholder, "aria-label": `${label} ${placeholder}`, ...attrs }));
+    const field = (key, unit, attrs) => (inputs[`${op}.${key}`] = h("input", { type: "number", value: s?.[key] ?? "", "aria-label": `${label} ${unit}`, ...attrs }));
     return h("div", { class: "setting-row" },
       h("span", {}, label),
       field("speed", "mm/min", { min: 10, max: 60000, step: 10 }),
@@ -181,7 +181,9 @@ async function materialDialog(existing) {
       h("h1", {}, existing ? "Edit material" : "New material"),
       h("label", { class: "field" }, "Name", name),
       h("label", { class: "field" }, "Notes", notes),
-      h("div", { class: "field" }, "Settings (leave speed empty for none)", rows),
+      h("div", { class: "field" }, "Settings (leave speed empty for none)",
+        h("div", { class: "setting-row head", "aria-hidden": "true" }, h("span"), h("span", {}, "mm/min"), h("span", {}, "Power %"), h("span", {}, "Passes"), h("span", {}, "Gap mm")),
+        rows),
       h("div", { class: "actions" },
         h("button", { class: "btn", value: "", formnovalidate: true }, "Cancel"),
         h("button", { class: "btn primary", value: "ok" }, existing ? "Save material" : "Add material")),

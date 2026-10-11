@@ -82,18 +82,28 @@ class SerialTransport:
         self._ser.close()
 
 
-def list_ports() -> list[dict]:
+def list_ports(show_all: bool = False) -> tuple[list[dict], int]:
+    """Serial ports worth offering, and how many were left out.
+
+    Linux lists 32 legacy /dev/ttyS* ports whether or not anything is attached,
+    and macOS lists Bluetooth ones; neither has any hardware details. Those are
+    hidden unless `show_all`, so the laser's USB port isn't buried.
+    """
     try:
         from serial.tools import list_ports as lp
     except ImportError:
-        return []
-    ports = []
+        return [], 0
+    ports, hidden = [], 0
     for info in lp.comports():
         desc = info.description if info.description and info.description != "n/a" else ""
+        real = info.vid is not None or (info.hwid or "n/a") != "n/a"
+        if not real and not show_all:
+            hidden += 1
+            continue
         ports.append({"device": info.device, "description": desc, "usb": info.vid is not None})
     # USB serial adapters first: that's where the laser will be.
     ports.sort(key=lambda item: (not item["usb"], item["device"]))
-    return ports
+    return ports, hidden
 
 
 class GrblController:
@@ -153,16 +163,15 @@ class GrblController:
             return
         with self._lock:
             job = self.job
-            busy = job and job.state in ("running", "paused", "stopping")
-            if busy:
-                job.state, job.error, job.ended = "stopped", "Disconnected while running", time.time()
-            self._expect_reset = True
-        if busy or self.state in ("Run", "Jog", "Hold"):
-            # Never leave the laser running with nobody listening.
-            self._write(p.FEED_HOLD)
-            time.sleep(0.3)
-            self._write(p.SOFT_RESET)
-            time.sleep(0.1)
+            busy = bool(job and job.state in ("running", "paused", "stopping"))
+            if (busy or self.state in ("Run", "Jog", "Hold")) and self.connected:
+                # Never leave the laser running with nobody listening: stop it the careful way first.
+                if job and job.state == "stopping" and self._halt:
+                    self._halt.update(final="stopped", error="Disconnected while running")
+                self._begin_halt("stopped", "Disconnected while running" if busy else None)
+        deadline = time.monotonic() + 4.0
+        while self._halt and thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.02)
         self._alive = False
         thread.join(timeout=2)  # the IO thread closes the port on its way out
 
@@ -320,14 +329,21 @@ class GrblController:
         self._emit({"type": "status", "status": self.snapshot()})
 
     def _begin_halt(self, final: str, error: str | None) -> None:
-        """Feed hold now; the IO loop soft-resets once motion has stopped."""
+        """Feed hold now; the IO loop soft-resets once the machine has really stopped.
+
+        "Really" matters. A hold sent while GRBL is still idle is ignored, and lines
+        already in its buffer then start moving. So the reset waits for status
+        reports that arrived after the hold, and the hold is sent again if one of
+        them shows motion.
+        """
         if self._halt:
             return
         self._manual.clear()
         if self.job and self.job.state in ("running", "paused"):
             self.job.state = "stopping"
-        self._halt = {"at": time.monotonic(), "final": final, "error": error}
+        self._halt = {"at": time.monotonic(), "final": final, "error": error, "fresh": 0, "idle": 0}
         self._write(p.FEED_HOLD)
+        self._last_status = 0.0  # ask for a status report straight away
 
     def _finish_halt(self) -> None:
         halt, self._halt = self._halt, None
@@ -361,13 +377,17 @@ class GrblController:
                 now = time.monotonic()
                 with self._lock:
                     if self._halt:
-                        waited = now - self._halt["at"]
-                        settled = (self.state == "Hold" and self.substate in (0, None)) or self.state in ("Idle", "Alarm")
-                        if (settled and waited > 0.25) or waited > 2.0:
+                        halt = self._halt
+                        held = self.state == "Hold" and self.substate in (0, None) and halt["fresh"] >= 1
+                        idle = self.state == "Idle" and halt["idle"] >= 2
+                        alarm = self.state == "Alarm" and halt["fresh"] >= 1
+                        # Past the deadline the laser being off matters more than keeping position.
+                        if held or idle or alarm or now - halt["at"] > 3.0:
                             self._finish_halt()
                     else:
                         self._pump()
-                if now - self._last_status > self.POLL_SECONDS:
+                # Poll faster while stopping, so the reset follows the hold closely.
+                if now - self._last_status > (0.05 if self._halt else self.POLL_SECONDS):
                     self._last_status = now
                     self._write(p.STATUS_QUERY)
         except Exception as exc:
@@ -507,6 +527,16 @@ class GrblController:
             self.mpos = [status["wpos"][i] + self.wco[i] for i in range(2)]
         self.feed = status.get("feed", self.feed)
         self.power = status.get("power", self.power)
+        if self._halt:
+            halt = self._halt
+            halt["fresh"] += 1
+            if self.state in ("Run", "Jog", "Home"):
+                # Moving after the hold was sent: it arrived too early. Hold again.
+                halt["idle"] = 0
+                self._write(p.FEED_HOLD)
+            elif self.state == "Idle":
+                # Only trust idle when nothing sent is still waiting to be read and run.
+                halt["idle"] = halt["idle"] + 1 if not self._sent else 0
         job = self.job
         if job and job.state == "running" and job.acked >= len(job.lines):
             # Everything is acknowledged; wait for motion to actually finish.

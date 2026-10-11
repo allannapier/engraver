@@ -205,3 +205,37 @@ def test_progress_follows_estimated_time(rig):
     sim.speed = 300
     wait_for(lambda: ctl.job.state == "done", message="done")
     assert ctl.job.public()["progress"] == 1.0
+
+
+def test_stop_right_after_start_never_resets_mid_motion(rig):
+    """A hold that reaches GRBL before it has started moving is ignored, and the
+    lines already in its buffer then run. Stop must notice and hold again rather
+    than reset during motion, which raises an alarm and loses position."""
+    ctl, sim, _ = rig
+    sim.speed = 1
+    sim.TICK = 0.03  # the simulator reads its buffer every 30 ms, leaving a window to hit
+    for attempt in range(6):
+        ctl.start(square(size=150, feed=3000), name=f"Run {attempt}")
+        while ctl.job.sent == 0:  # spin until the lines have just been written...
+            pass
+        ctl.stop()  # ...so the hold lands before the simulator has read them
+        wait_for(lambda: ctl.job.state == "stopped" and ctl.state == "Idle", message=f"stopped cleanly on attempt {attempt}")
+        assert sim.state == "Idle" and ctl.alarm is None, f"attempt {attempt} ended in {sim.state}"
+        still = list(sim.mpos)
+        time.sleep(0.1)
+        assert sim.mpos == still, "nothing may still be moving after a stop"
+    assert sim.resets == 6
+
+
+def test_stop_while_idle_and_while_paused(rig):
+    ctl, sim, _ = rig
+    ctl.stop()
+    wait_for(lambda: sim.resets == 1 and ctl.state == "Idle", message="idle stop")
+    sim.speed = 1
+    ctl.start(square(size=100, feed=600))
+    wait_for(lambda: ctl.state == "Run", message="running")
+    ctl.pause()
+    wait_for(lambda: ctl.state == "Hold", message="hold")
+    ctl.stop()
+    wait_for(lambda: ctl.job.state == "stopped" and ctl.state == "Idle", message="stopped from pause")
+    assert sim.state == "Idle"

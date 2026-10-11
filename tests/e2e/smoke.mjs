@@ -220,7 +220,13 @@ await shot("03-laser-tab");
 
 step("frame traces the job outline");
 await page.click("#job-frame");
+await waitStatus((s) => s.job && s.job.kind === "frame" && s.state === "Run");
+// The laser is off while framing, so the status mustn't say it's running.
+await page.waitForFunction(() => document.getElementById("state-text").textContent === "Framing");
 await waitStatus((s) => s.job && s.job.kind === "frame" && s.job.state === "done");
+// Ports the operating system lists with nothing behind them are tucked away.
+const portOptions = await page.locator("#port option").allTextContents();
+assert.ok(!portOptions.some((text) => /ttyS\d/.test(text)), `port list should be short: ${portOptions.join(", ")}`);
 
 step("start asks first, then runs to the end");
 await page.click("#job-start");
@@ -388,7 +394,7 @@ await page.route("**/api/ai/chat", async (route) => {
   asked = route.request().postDataJSON();
   await route.fulfill({
     json: {
-      text: "Here's a star for the coaster, with plywood settings.",
+      text: "Here's a **star** for the coaster, with `plywood` settings.",
       actions: [
         { type: "add_design", name: "Star", mode: "fill", width_mm: 60, x_mm: 300, y_mm: 40,
           svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><polygon points="50,5 61,38 96,38 68,59 79,93 50,72 21,93 32,59 4,38 39,38" fill="#000"/></svg>' },
@@ -414,6 +420,22 @@ const star = await store((s) => {
   return { ...o, layer: s.layerById(o.layerId) };
 });
 assert.equal(star.name, "Star");
+// Bold and code come out as formatting, not as stray asterisks and backticks.
+const reply = page.locator(".msg.assistant").last();
+assert.equal(await reply.locator("strong").textContent(), "star");
+assert.equal(await reply.locator("code").textContent(), "plywood");
+assert.ok(!(await reply.textContent()).includes("**"));
+// The message box stays inside the panel even with a much wider font.
+const fits = await page.evaluate(() => {
+  const panel = document.getElementById("tab-assistant");
+  panel.style.fontFamily = "monospace";
+  panel.style.fontSize = "19px";
+  const edge = panel.getBoundingClientRect().right - parseFloat(getComputedStyle(panel).paddingRight);
+  const widest = Math.max(...[...panel.querySelectorAll("textarea, .composer button, .msg")].map((node) => node.getBoundingClientRect().right));
+  panel.style.fontFamily = panel.style.fontSize = "";
+  return widest <= edge + 0.5;
+});
+assert.ok(fits, "assistant messages and message box fit inside the panel");
 near(star.w, 60, 0.01);
 near(star.x, 300, 0.01);
 near(400 - (star.y + star.h), 40, 0.01);
