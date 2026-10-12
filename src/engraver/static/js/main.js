@@ -61,7 +61,13 @@ async function importFiles(files) {
 async function textDialog(existing) {
   const text = existing ? { ...existing.text } : { value: "", font: FONTS[0][1], bold: false, italic: false };
   const area = h("textarea", { rows: 3, value: text.value, placeholder: "Your text", required: true, style: "width:100%" });
+  const known = FONTS.some(([, value]) => value === text.font);
   const font = h("select", {}, FONTS.map(([label, value]) => h("option", { value, selected: value === text.font }, label)));
+  // Previews come only from the built-in list, never from a font string in a loaded project.
+  for (const option of font.options) option.style.fontFamily = option.value;
+  const preview = () => { font.style.fontFamily = font.value; };
+  if (known) preview();
+  font.addEventListener("change", preview);
   const bold = h("input", { type: "checkbox", checked: text.bold });
   const italic = h("input", { type: "checkbox", checked: text.italic });
   const result = await modal((form) => {

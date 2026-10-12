@@ -269,6 +269,22 @@ export const FONTS = [
   ["Rounded", "'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif"],
   ["Script", "'Brush Script MT', 'Segoe Script', cursive"],
   ["Impact", "Impact, 'Arial Black', sans-serif"],
+  ["Verdana", "Verdana, Geneva, sans-serif"],
+  ["Tahoma", "Tahoma, 'Segoe UI', sans-serif"],
+  ["Trebuchet", "'Trebuchet MS', Tahoma, sans-serif"],
+  ["Gill Sans", "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"],
+  ["Futura", "Futura, 'Century Gothic', 'Trebuchet MS', sans-serif"],
+  ["Palatino", "Palatino, 'Palatino Linotype', 'Book Antiqua', serif"],
+  ["Garamond", "Garamond, 'EB Garamond', 'Times New Roman', serif"],
+  ["Bookman", "'Bookman Old Style', Bookman, Georgia, serif"],
+  ["Didot", "Didot, 'Bodoni MT', 'Playfair Display', serif"],
+  ["Courier", "'Courier New', Courier, monospace"],
+  ["Lucida Console", "'Lucida Console', 'Lucida Sans Typewriter', Monaco, monospace"],
+  ["Comic", "'Comic Sans MS', 'Comic Neue', cursive"],
+  ["Marker", "'Marker Felt', 'Chalkboard SE', 'Comic Sans MS', cursive"],
+  ["Papyrus", "Papyrus, 'Herculanum', fantasy"],
+  ["Copperplate", "Copperplate, 'Copperplate Gothic Light', fantasy"],
+  ["Brush", "'Lucida Handwriting', 'Apple Chancery', 'Segoe Script', cursive"],
 ];
 
 /** Build the SVG for a text object and measure it. Returns {svg, vb}. */
