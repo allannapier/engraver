@@ -242,6 +242,79 @@ def test_assistant_falls_back_when_the_model_rejects_tools(client):
     assert reply["text"] == "Here you go."
 
 
+REF = "data:image/jpeg;base64,/9j/AAAA"
+
+
+def test_assistant_gets_the_reference_picture_before_the_canvas(client):
+    client.put("/api/config", json={"llm": {"model": "test/model", "vision": True}})
+    calls = []
+
+    async def completion(**kwargs):
+        calls.append(kwargs)
+        return fake_response("Done.")
+
+    client.app.state.completion = completion
+    body = {
+        "messages": [{"role": "user", "content": "like this"}],
+        "image": "data:image/png;base64,AAAA",
+        "reference": REF,
+    }
+    assert client.post("/api/ai/chat", json=body).status_code == 200
+    text, ref, canvas = calls[0]["messages"][-1]["content"]
+    assert ref["image_url"]["url"] == REF and canvas["image_url"]["url"].startswith("data:image/png")
+    assert "reference picture" in text["text"] and "last attached image is the canvas" in text["text"]
+
+
+def test_reference_picture_is_sent_even_with_canvas_vision_off(client):
+    client.put("/api/config", json={"llm": {"model": "test/model", "vision": False}})
+    calls = []
+
+    async def completion(**kwargs):
+        calls.append(kwargs)
+        return fake_response("Done.")
+
+    client.app.state.completion = completion
+    body = {
+        "messages": [{"role": "user", "content": "like this"}],
+        "image": "data:image/png;base64,AAAA",
+        "reference": REF,
+    }
+    client.post("/api/ai/chat", json=body)
+    content = calls[0]["messages"][-1]["content"]
+    assert [part["type"] for part in content] == ["text", "image_url"]
+    assert content[1]["image_url"]["url"] == REF and "as it looks now" not in content[0]["text"]
+
+
+def test_reference_picture_is_never_dropped_silently(client):
+    client.put("/api/config", json={"llm": {"model": "ollama/tiny", "vision": True}})
+    attempts = []
+
+    class BadRequestError(Exception):
+        pass
+
+    async def completion(**kwargs):
+        content = kwargs["messages"][-1]["content"]
+        attempts.append(sum(1 for part in content if part.get("type") == "image_url"))
+        raise BadRequestError("this model does not support images")
+
+    client.app.state.completion = completion
+    body = {
+        "messages": [{"role": "user", "content": "like this"}],
+        "image": "data:image/png;base64,AAAA",
+        "reference": REF,
+    }
+    r = client.post("/api/ai/chat", json=body)
+    assert attempts == [2, 1, 1]  # the canvas picture can go, the reference always stays
+    assert r.status_code == 400 and "couldn't take the reference picture" in r.json()["detail"]
+
+
+def test_reference_picture_must_be_an_image_data_url(client):
+    client.put("/api/config", json={"llm": {"model": "test/model"}})
+    for bad in ("https://example.com/cat.png", "data:image/svg+xml;base64,PHN2Zy8+", "data:text/html;base64,AAAA"):
+        r = client.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}], "reference": bad})
+        assert r.status_code == 422, bad
+
+
 def test_assistant_errors_are_readable_and_hide_the_key(client):
     client.put("/api/config", json={"llm": {"model": "x/y", "api_key": "sk-supersecret"}})
 

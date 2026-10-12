@@ -199,7 +199,12 @@ def _context_text(context: dict) -> str:
 
 
 def build_messages(
-    machine: MachineProfile, history: list[dict], context: dict, image: str | None, library: str = ""
+    machine: MachineProfile,
+    history: list[dict],
+    context: dict,
+    image: str | None,
+    library: str = "",
+    reference: str | None = None,
 ) -> list[dict]:
     messages: list[dict] = [{"role": "system", "content": system_prompt(machine, library)}]
     turns = [m for m in history if m.get("role") in ("user", "assistant") and m.get("content")][-MAX_HISTORY:]
@@ -209,16 +214,22 @@ def build_messages(
         messages.append({"role": turn["role"], "content": str(turn["content"])})
     last = str(turns[-1]["content"])
     text = f"{last}\n\n{_context_text(context)}"
-    if image:
-        messages.append(
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": text + "\n\nThe attached image is the canvas as it looks now."},
-                    {"type": "image_url", "image_url": {"url": image}},
-                ],
-            }
+    pictures = []
+    if reference:
+        text += (
+            "\n\nThe person attached a reference picture to guide the design. It is not on the canvas and "
+            "can't be engraved as it is: use it for shapes, style and layout."
         )
+        pictures.append({"type": "image_url", "image_url": {"url": reference}})
+    if image:
+        text += (
+            "\n\nThe last attached image is the canvas as it looks now."
+            if reference
+            else "\n\nThe attached image is the canvas as it looks now."
+        )
+        pictures.append({"type": "image_url", "image_url": {"url": image}})
+    if pictures:
+        messages.append({"role": "user", "content": [{"type": "text", "text": text}, *pictures]})
     else:
         messages.append({"role": "user", "content": text})
     return messages
@@ -291,6 +302,7 @@ async def chat(
     image: str | None = None,
     completion: Completion | None = None,
     library: str = "",
+    reference: str | None = None,
 ) -> dict:
     if not settings.model:
         raise AssistantError("No model is set up yet. Add your provider details in Setup.")
@@ -307,7 +319,9 @@ async def chat(
         base["api_base"] = settings.api_base
 
     async def attempt(with_tools: bool, with_image: bool):
-        messages = build_messages(machine, history, context, use_image if with_image else None, library)
+        messages = build_messages(
+            machine, history, context, use_image if with_image else None, library, reference=reference
+        )
         kwargs = dict(base, messages=messages)
         if with_tools:
             kwargs.update(tools=TOOLS, tool_choice="auto")
@@ -336,6 +350,12 @@ async def chat(
             ):
                 raise AssistantError(_friendly(exc, settings.api_key)) from exc
     else:
+        if reference:
+            # The reference picture is never dropped silently: the person asked the model to look at it.
+            raise AssistantError(
+                f"{settings.model} couldn't take the reference picture. It may not read images: "
+                "choose a model that does in Setup, or remove the picture and try again."
+            ) from error
         raise AssistantError(_friendly(error, settings.api_key)) from error
 
     text, actions = _extract(response)

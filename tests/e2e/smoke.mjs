@@ -448,6 +448,43 @@ await page.locator("#stage").focus();
 await page.keyboard.press("Control+z");
 assert.equal(await store((s) => s.state.doc.objects.length), 1, "one undo reverses the whole reply");
 
+step("a reference picture goes to the assistant, scaled down, until it is removed");
+const bigPng = Buffer.from(await page.evaluate(() => {
+  const c = document.createElement("canvas");
+  c.width = 2400;
+  c.height = 1200;
+  const g = c.getContext("2d");
+  g.fillStyle = "#c33";
+  g.fillRect(200, 200, 800, 800);
+  return c.toDataURL("image/png").split(",")[1];
+}), "base64");
+await page.click('[data-tab="assistant"]');
+await page.locator('#tab-assistant input[type="file"]').setInputFiles({ name: "sketch.png", mimeType: "image/png", buffer: bigPng });
+await page.waitForSelector(".ref-attach:not([hidden]) img");
+assert.equal(await page.locator(".ref-attach strong").textContent(), "sketch.png");
+await page.fill("#tab-assistant textarea", "Trace this sketch");
+await page.press("#tab-assistant textarea", "Enter");
+await page.waitForFunction(() => document.querySelectorAll(".msg.assistant:not(.thinking)").length >= 2);
+assert.ok(asked.reference.startsWith("data:image/jpeg;base64,"), "the reference is sent as a JPEG");
+const refSize = await page.evaluate((url) => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => resolve([img.naturalWidth, img.naturalHeight]);
+  img.src = url;
+}), asked.reference);
+assert.deepEqual(refSize, [1024, 512], "the reference is scaled to 1024 px on the long side");
+assert.equal(await page.locator(".msg.user .msg-ref").count(), 1, "the sent message shows the picture");
+await page.click('.ref-attach button:has-text("Remove")');
+assert.ok(await page.locator(".ref-attach").isHidden());
+await page.fill("#tab-assistant textarea", "Thanks");
+await page.press("#tab-assistant textarea", "Enter");
+await page.waitForFunction(() => document.querySelectorAll(".msg.assistant:not(.thinking)").length >= 3);
+assert.equal(asked.reference, null, "a removed picture is no longer sent");
+await page.keyboard.press("Escape");
+await page.locator("#stage").focus();
+await page.keyboard.press("Control+z");
+await page.keyboard.press("Control+z");
+assert.equal(await store((s) => s.state.doc.objects.length), 1);
+
 step("settings are saved from Setup");
 await page.unroute("**/api/state");
 await page.click('[data-tab="setup"]');
