@@ -166,6 +166,15 @@ assert.ok(Math.min(...burnXs) >= 200 - 0.5 && Math.max(...burnXs) <= 200 + text.
 assert.ok(Math.min(...burnYs) >= 250 - 0.5 && Math.max(...burnYs) <= 250 + text.h + 0.5, "ink stays inside the text box vertically");
 assert.ok(Math.max(...burnXs) - Math.min(...burnXs) > text.w * 0.8, "ink spans most of the box width");
 
+step("the typeface list previews each font and the chosen one");
+await page.click('[data-tool="text"]');
+const fontStyles = await page.$$eval("dialog select option", (opts) => opts.map((o) => o.style.fontFamily));
+assert.ok(fontStyles.length > 6 && fontStyles.every(Boolean), "every typeface option renders in its own font");
+await page.selectOption("dialog select", { label: "Garamond" });
+assert.match(await page.$eval("dialog select", (el) => el.style.fontFamily), /Garamond/, "closed select shows the chosen font");
+await page.click('dialog button[value=""]');
+await page.waitForFunction(() => !document.querySelector("dialog[open]"));
+
 step("text on a line layer is skipped with an explanation");
 await page.selectOption("#prop-layer", { label: "Cut" });
 p = await preview();
