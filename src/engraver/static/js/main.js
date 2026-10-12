@@ -58,15 +58,41 @@ async function importFiles(files) {
   }
 }
 
+/** The text settings of an object we can edit as text: ours, or <text> elements, possibly inside a group (e.g. from the assistant). */
+function textOf(obj) {
+  if (obj?.kind === "text") return obj.text;
+  if (obj?.kind !== "svg") return null;
+  const root = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${obj.svg}</svg>`, "image/svg+xml").documentElement;
+  // Look through wrapper groups (the importer wraps root-level presentation attributes in one).
+  let box = root;
+  while (box.children.length === 1 && box.children[0].localName === "g") box = box.children[0];
+  const nodes = [...box.children];
+  if (!nodes.length || nodes.some((n) => n.localName !== "text" || n.querySelector("*:not(tspan)"))) return null;
+  const chain = [nodes[0]];
+  for (let n = box; n; n = n.parentElement) chain.push(n);
+  const inherited = (name) => chain.find((n) => n.getAttribute(name))?.getAttribute(name) || "";
+  const lines = nodes.flatMap((node) => {
+    const tspans = [...node.querySelectorAll("tspan")];
+    return tspans.length ? tspans.map((t) => t.textContent) : [node.textContent];
+  });
+  return {
+    value: lines.join("\n").trim(),
+    font: inherited("font-family") || FONTS[0][1],
+    bold: /bold|[6-9]00/.test(inherited("font-weight")),
+    italic: /italic|oblique/.test(inherited("font-style")),
+  };
+}
+
 async function textDialog(existing) {
-  const text = existing ? { ...existing.text } : { value: "", font: FONTS[0][1], bold: false, italic: false };
+  const text = existing ? { ...textOf(existing) } : { value: "", font: FONTS[0][1], bold: false, italic: false };
   const area = h("textarea", { rows: 3, value: text.value, placeholder: "Your text", required: true, style: "width:100%" });
-  const known = FONTS.some(([, value]) => value === text.font);
-  const font = h("select", {}, FONTS.map(([label, value]) => h("option", { value, selected: value === text.font }, label)));
+  const builtIn = (value) => FONTS.some(([, v]) => v === value);
+  const fonts = builtIn(text.font) ? FONTS : [["Current", text.font], ...FONTS];
+  const font = h("select", {}, fonts.map(([label, value]) => h("option", { value, selected: value === text.font }, label)));
   // Previews come only from the built-in list, never from a font string in a loaded project.
-  for (const option of font.options) option.style.fontFamily = option.value;
-  const preview = () => { font.style.fontFamily = font.value; };
-  if (known) preview();
+  for (const option of font.options) if (builtIn(option.value)) option.style.fontFamily = option.value;
+  const preview = () => { font.style.fontFamily = builtIn(font.value) ? font.value : ""; };
+  preview();
   font.addEventListener("change", preview);
   const bold = h("input", { type: "checkbox", checked: text.bold });
   const italic = h("input", { type: "checkbox", checked: text.italic });
@@ -87,10 +113,10 @@ async function textDialog(existing) {
   if (existing) {
     const content = textContent(next);
     const cx = existing.x + existing.w / 2;
-    const lines = next.value.split("\n").length, before = existing.text.value.split("\n").length;
+    const lines = next.value.split("\n").length, before = text.value.split("\n").length;
     const hNew = (existing.h / before) * lines;
     const wNew = (hNew * content.vb[2]) / content.vb[3];
-    Object.assign(existing, { ...content, text: next, w: wNew, h: hNew, x: cx - wNew / 2, name: next.value.split("\n")[0].slice(0, 24) });
+    Object.assign(existing, { ...content, kind: "text", text: next, w: wNew, h: hNew, x: cx - wNew / 2, name: next.value.split("\n")[0].slice(0, 24) });
   } else {
     select([place(objectFromText(next), "fill").id]);
   }
@@ -157,7 +183,7 @@ function initTools() {
     event.target.value = "";
   });
   onDoubleClick((obj) => {
-    if (obj?.kind === "text") textDialog(obj);
+    if (textOf(obj)) textDialog(obj);
   });
 
   // Drag files onto the canvas, or paste an SVG or picture.
@@ -208,6 +234,7 @@ function initProps() {
   const sync = () => {
     const picked = selected();
     bar.hidden = picked.length === 0;
+    $("prop-edit-text").hidden = !(picked.length === 1 && textOf(picked[0]));
     $("stage-hint").hidden = picked.length > 0;
     if (!picked.length) return;
     const box = aabb(picked);
@@ -256,6 +283,7 @@ function initProps() {
       $("stage").focus({ preventScroll: true });
     });
   }
+  $("prop-edit-text").addEventListener("click", () => textDialog(selected()[0]));
   lock.addEventListener("click", () => {
     state.ui.lockAspect = !state.ui.lockAspect;
     emit("ui");
