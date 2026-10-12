@@ -175,6 +175,25 @@ assert.equal(await store((s) => s.state.doc.objects[2].text.value), "Scooby", "t
 assert.equal(await store((s) => s.state.doc.objects.length), 3, "editing does not add an object");
 await page.click('[data-tool="undo"]');
 
+step("assistant-style SVG text, even inside an inherited-attribute group, can be edited");
+await paste(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40" fill="#000" font-family="Impact" font-weight="bold"><text x="0" y="30" font-size="30">Hi</text></svg>`);
+await page.waitForFunction(() => document.querySelectorAll(".obj").length === 4);
+await page.waitForSelector("#prop-edit-text:not([hidden])");
+const pastedId = await store((s) => s.state.doc.objects[3].id);
+await page.click("#prop-edit-text");
+await page.fill("dialog textarea", "Hello");
+await page.click('dialog button[value="ok"]');
+await page.waitForFunction(() => !document.querySelector("dialog[open]"));
+const edited = await store((s) => ({ ...s.state.doc.objects[3], n: s.state.doc.objects.length }));
+assert.equal(edited.id, pastedId, "same object updated");
+assert.equal(edited.kind, "text");
+assert.equal(edited.text.value, "Hello");
+assert.equal(edited.n, 4);
+await page.click('[data-tool="undo"]');
+await page.click('[data-tool="undo"]');
+await page.waitForFunction(() => document.querySelectorAll(".obj").length === 3);
+await store((s) => s.select([s.state.doc.objects[2].id]));
+
 step("text on a line layer is skipped with an explanation");
 await page.selectOption("#prop-layer", { label: "Cut" });
 p = await preview();

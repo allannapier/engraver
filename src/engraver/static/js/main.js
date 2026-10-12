@@ -58,21 +58,28 @@ async function importFiles(files) {
   }
 }
 
-/** The text settings of an object we can edit as text: ours, or a lone <text> element (e.g. from the assistant). */
+/** The text settings of an object we can edit as text: ours, or <text> elements, possibly inside a group (e.g. from the assistant). */
 function textOf(obj) {
   if (obj?.kind === "text") return obj.text;
   if (obj?.kind !== "svg") return null;
   const root = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${obj.svg}</svg>`, "image/svg+xml").documentElement;
-  const nodes = [...root.children];
-  if (nodes.length !== 1 || nodes[0].localName !== "text" || nodes[0].querySelector("*:not(tspan)")) return null;
-  const node = nodes[0];
-  const lines = [...node.querySelectorAll("tspan")].map((t) => t.textContent);
-  const family = node.getAttribute("font-family") || node.closest("svg")?.getAttribute("font-family");
+  // Look through wrapper groups (the importer wraps root-level presentation attributes in one).
+  let box = root;
+  while (box.children.length === 1 && box.children[0].localName === "g") box = box.children[0];
+  const nodes = [...box.children];
+  if (!nodes.length || nodes.some((n) => n.localName !== "text" || n.querySelector("*:not(tspan)"))) return null;
+  const chain = [nodes[0]];
+  for (let n = box; n; n = n.parentElement) chain.push(n);
+  const inherited = (name) => chain.find((n) => n.getAttribute(name))?.getAttribute(name) || "";
+  const lines = nodes.flatMap((node) => {
+    const tspans = [...node.querySelectorAll("tspan")];
+    return tspans.length ? tspans.map((t) => t.textContent) : [node.textContent];
+  });
   return {
-    value: (lines.length ? lines.join("\n") : node.textContent).trim(),
-    font: family || FONTS[0][1],
-    bold: /bold|[6-9]00/.test(node.getAttribute("font-weight") || ""),
-    italic: /italic|oblique/.test(node.getAttribute("font-style") || ""),
+    value: lines.join("\n").trim(),
+    font: inherited("font-family") || FONTS[0][1],
+    bold: /bold|[6-9]00/.test(inherited("font-weight")),
+    italic: /italic|oblique/.test(inherited("font-style")),
   };
 }
 
