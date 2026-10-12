@@ -7,6 +7,7 @@ A local browser app for designing and running jobs on an Atomstack A10 (or any G
 
 - **Canvas**: import SVGs and pictures, add text and shapes, then move, scale and rotate them on a to-scale bed.
 - **Layers**: speed, power, passes and mode (line or fill) per layer.
+- **Saved designs**: **Save** (Ctrl+S) keeps the canvas and its layers in the app; **Open** lists them with a preview. They live in `~/.engraver/designs/`. **Download file** and **Open a file** move a design between computers.
 - **Materials**: burn a test card on scrap, pick the best square, and keep the result in your own material library.
 - **Laser control**: connect, jog, set and go to origin, frame, start, pause, resume, stop.
 - **Assistant**: add your LLM provider and it can draw designs, rework the selected one, and recommend settings.
@@ -77,6 +78,8 @@ Then use the **Assistant** tab:
 
 It acts by editing the canvas and the layer settings, and each reply is one undo step. It has no way to move the head or fire the laser.
 
+The chat is kept when you reload. **New chat** clears it and starts again; **Chats** reopens earlier ones (the last 30 are kept, in `~/.engraver/chats/`).
+
 Settings live in `~/.engraver/config.json` (override with `ENGRAVER_CONFIG`). The API key is stored there in plain text, readable only by you, and is sent only to the provider you chose.
 
 ## Reporting a bug
@@ -128,6 +131,7 @@ src/engraver/
   gcode.py          job description -> G-code (vector, raster, frame)
   materials.py      generic starting-point table and never-laser list
   library.py        your own materials (saved and tested settings)
+  saved.py          saved designs and assistant chats
   bugs.py           bug reports: diagnostics, redaction, filing the GitHub issue
   llm.py            assistant prompt, tools, LiteLLM call
   config.py         saved settings

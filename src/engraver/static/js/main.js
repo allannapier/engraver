@@ -2,11 +2,11 @@
 // property bar, job bar and keyboard, and starts the panels.
 
 import { installDiagnostics } from "./diagnostics.js";
-import { state, on, emit, bed, commit, undo, redo, canUndo, canRedo, select, selected, layerById, loadDoc, storedProject, serialize, uid, setMaterials } from "./store.js";
+import { state, on, emit, bed, commit, undo, redo, canUndo, canRedo, select, selected, layerById, loadDoc, storedProject, uid, setMaterials } from "./store.js";
 import { api, post, connectEvents } from "./api.js";
 import { h, icon, toast, modal, formatDuration, act, download } from "./ui.js";
 import { initStage, fitView, zoomBy, viewCenter, aabb, isTyping, onDoubleClick, outputObjects } from "./stage.js";
-import { objectFromSvgText, objectFromImage, objectFromText, objectFromShape, textContent, fitSize, sanitizeMarkup, FONTS } from "./svgutil.js";
+import { objectFromSvgText, objectFromImage, objectFromText, objectFromShape, textContent, fitSize, FONTS } from "./svgutil.js";
 import { buildJob } from "./job.js";
 import { confirmAndStart, frame } from "./run.js";
 import { initDesign } from "./design.js";
@@ -14,6 +14,7 @@ import { initLaser, addLog } from "./laser.js";
 import { initSetup } from "./setup.js";
 import { initAssistant } from "./assistant.js";
 import { initBugReport } from "./bugreport.js";
+import { initDesigns, cleanProject, saveDesign } from "./designs.js";
 
 installDiagnostics(); // before anything else runs, so start-up errors are caught too
 
@@ -304,9 +305,14 @@ function initProps() {
 
 function initKeys() {
   window.addEventListener("keydown", (event) => {
-    if (isTyping(event) || $("dialog").open) return;
     const mod = event.ctrlKey || event.metaKey;
     const key = event.key.toLowerCase();
+    if (mod && key === "s" && !$("dialog").open) {
+      event.preventDefault(); // the browser's own Save page is never what's wanted here
+      act(saveDesign)();
+      return;
+    }
+    if (isTyping(event) || $("dialog").open) return;
     if (mod && key === "z") { event.preventDefault(); (event.shiftKey ? redo : undo)(); }
     else if (mod && key === "y") { event.preventDefault(); redo(); }
     else if (mod && key === "d") { event.preventDefault(); TOOLS.duplicate(); }
@@ -442,35 +448,13 @@ function initJobs() {
 
 // --- project files ---------------------------------------------------------------------------
 
-function cleanProject(data) {
-  // Project files and saved state are treated as untrusted: artwork is sanitised again on load.
-  for (const obj of data?.doc?.objects || []) if (typeof obj.svg === "string") obj.svg = sanitizeMarkup(obj.svg);
-  return data;
-}
-
-function initProject() {
-  $("project-save").addEventListener("click", () => download("project.engraver.json", serialize(), "application/json"));
-  $("project-open").addEventListener("click", () => $("file-project").click());
-  $("file-project").addEventListener("change", act(async (event) => {
-    const file = event.target.files[0];
-    event.target.value = "";
-    if (!file) return;
-    let data;
-    try {
-      data = JSON.parse(await readAs(file, "readAsText"));
-    } catch {
-      throw new Error("That file isn't an Engraver project.");
-    }
-    loadDoc(cleanProject(data));
-    toast(`Opened ${file.name}.`);
-  }));
+function restoreProject() {
   const saved = storedProject();
-  if (saved) {
-    try {
-      loadDoc(cleanProject(saved), { record: false });
-    } catch {
-      /* start fresh */
-    }
+  if (!saved) return;
+  try {
+    loadDoc(cleanProject(saved), { record: false });
+  } catch {
+    /* start fresh */
   }
 }
 
@@ -491,7 +475,8 @@ function initTabs() {
 async function boot() {
   on("toast", ({ kind, text }) => toast(text, kind));
   initTabs();
-  initProject();
+  restoreProject();
+  initDesigns();
   try {
     const data = await api("/api/state");
     Object.assign(state, { status: data.status, config: data.config, machine: data.machine, never: data.never });

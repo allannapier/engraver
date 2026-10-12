@@ -2,8 +2,8 @@
 // It never controls the machine; it only edits what's on the canvas and in the layer list.
 
 import { state, on, bed, commit, select, selected, newLayer, layerById, objectById, LAYER_COLORS } from "./store.js";
-import { post } from "./api.js";
-import { h } from "./ui.js";
+import { api, post } from "./api.js";
+import { h, modal, closeModal, act, toast } from "./ui.js";
 import { aabb, snapshotPng, viewCenter } from "./stage.js";
 import { objectFromSvgText, sanitizeSvg, contentFromSvg } from "./svgutil.js";
 
@@ -14,6 +14,11 @@ let composer = null;
 let attachBox = null;
 // A picture the person attached to guide the assistant: { url, name }. It goes with every message until removed.
 let reference = null;
+
+// The chat on screen is kept by the server (~/.engraver/chats/) so it survives a reload,
+// and earlier chats can be reopened. `chatId` is null until the first message is sent.
+let chatId = null;
+let lastChat = null; // the most recent saved chat other than this one: { id, name }
 
 const REFERENCE_MAX_PX = 1024; // long side; plenty for a model to read, and keeps each request small
 
@@ -240,6 +245,7 @@ function drawChat() {
       ? "Describe something to make, ask for a change to the selected design, or ask what settings to use for your material."
       : "Add a model and API key in Setup to switch the assistant on. It can draw designs, rework them, and suggest settings for your material."));
     if (!hasModel) items.push(h("button", { type: "button", class: "btn small", style: "align-self:flex-start", onclick: () => document.querySelector('[data-tab="setup"]').click() }, "Open Setup"));
+    if (lastChat) items.push(h("button", { type: "button", class: "btn small", style: "align-self:flex-start", title: lastChat.name, onclick: act(() => openChat(lastChat.id)) }, "Back to last chat"));
   }
   if (busy) items.push(h("div", { class: "msg assistant thinking" }, "Working on it…"));
   chatBox.replaceChildren(...items);
@@ -269,12 +275,120 @@ async function send(text) {
     busy = false;
     drawChat();
     syncControls();
+    saveChat();
   }
+}
+
+// --- keeping chats -----------------------------------------------------------------
+
+const PICTURE_RE = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
+const newChatId = () => [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+/** A saved chat is outside input: keep only known fields, as plain text. */
+function cleanMessages(raw) {
+  return (Array.isArray(raw) ? raw : []).slice(-500).flatMap((m) => {
+    if (!m || !["user", "assistant"].includes(m.role) || typeof m.content !== "string") return [];
+    return [{
+      role: m.role,
+      content: m.content.slice(0, 20000),
+      ...(m.error ? { error: true } : {}),
+      ...(typeof m.picture === "string" && PICTURE_RE.test(m.picture) ? { picture: m.picture } : {}),
+      ...(Array.isArray(m.notes) ? { notes: m.notes.filter((n) => typeof n === "string").slice(0, 50).map((n) => n.slice(0, 300)) } : {}),
+      ...(m.undoable ? { undoable: true } : {}),
+    }];
+  });
+}
+
+function chatTitle() {
+  const first = state.chat.find((m) => m.role === "user")?.content || "Chat";
+  const line = first.replace(/\s+/g, " ").trim();
+  return line.length > 60 ? `${line.slice(0, 57)}…` : line;
+}
+
+async function saveChat() {
+  if (!state.chat.some((m) => m.role === "user")) return;
+  chatId ||= newChatId();
+  try {
+    await api(`/api/chats/${chatId}`, { method: "PUT", body: { title: chatTitle(), messages: cleanMessages(state.chat) } });
+  } catch (error) {
+    toast(`Couldn't keep this chat: ${error.message}`, "warn");
+  }
+}
+
+async function refreshLast() {
+  try {
+    const { chats } = await api("/api/chats");
+    const other = chats.find((c) => c.id !== chatId);
+    lastChat = other ? { id: other.id, name: other.name } : null;
+  } catch {
+    lastChat = null;
+  }
+  drawChat();
+}
+
+function newChat() {
+  if (busy) return;
+  state.chat = [];
+  chatId = null;
+  reference = null;
+  drawAttachment();
+  drawChat();
+  refreshLast();
+  composer?.focus();
+}
+
+async function openChat(id) {
+  if (busy) return;
+  const item = await api(`/api/chats/${id}`);
+  state.chat = cleanMessages(item.data);
+  chatId = item.id;
+  reference = null;
+  drawAttachment();
+  drawChat();
+  refreshLast();
+}
+
+const when = (seconds) => {
+  const d = new Date(seconds * 1000);
+  return d.toDateString() === new Date().toDateString()
+    ? d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+};
+
+async function showChats() {
+  const { chats } = await api("/api/chats");
+  let list;
+  const row = (c) => h("li", { class: "design-row chat-row" },
+    h("div", { class: "design-text" },
+      h("strong", {}, c.name, c.id === chatId ? h("span", { class: "note" }, " (open now)") : null),
+      h("span", { class: "note" }, `${when(c.updated)}${c.count ? ` · ${c.count} message${c.count === 1 ? "" : "s"}` : ""}`)),
+    h("button", { type: "button", class: "btn small", onclick: act(async () => { closeModal(""); await openChat(c.id); }) }, "Open"),
+    h("button", {
+      type: "button", class: "btn ghost small",
+      onclick: act(async (event) => {
+        const item = event.currentTarget.closest("li");
+        await api(`/api/chats/${c.id}`, { method: "DELETE" });
+        item.remove();
+        if (c.id === chatId) newChat();
+        else refreshLast();
+        if (!list.children.length) list.replaceWith(h("p", { class: "note" }, "No earlier chats."));
+      }),
+    }, "Delete"));
+  await modal((form) => {
+    list = h("ul", { class: "design-list" }, chats.map(row));
+    form.append(
+      h("h1", {}, "Chats"),
+      chats.length ? list : h("p", { class: "note" }, "No earlier chats. They're kept here once you send a message."),
+      h("p", { class: "note" }, "The last 30 chats are kept."),
+      h("div", { class: "actions" }, h("button", { class: "btn", value: "close" }, "Close")),
+    );
+  }, { wide: true });
 }
 
 function syncControls() {
   const hasModel = Boolean(state.config.llm?.model);
   for (const node of panel.querySelectorAll("[data-needs-model]")) node.disabled = busy || !hasModel;
+  for (const node of panel.querySelectorAll("[data-needs-chat]")) node.disabled = busy;
   if (composer) composer.placeholder = selected().length === 1 ? "What should change about the selected design?" : "What would you like to make?";
 }
 
@@ -310,8 +424,12 @@ export function initAssistant() {
     event.preventDefault();
     attach(event.dataTransfer.files);
   });
+  const chatBar = h("div", { class: "chat-bar" },
+    h("button", { type: "button", class: "btn ghost small", dataset: { needsChat: "" }, title: "Earlier chats with the assistant", onclick: act(showChats) }, "Chats"),
+    h("button", { type: "button", class: "btn ghost small", dataset: { needsChat: "" }, title: "Clear the chat and start again. The old one stays under Chats.", onclick: newChat }, "New chat"));
   const chip = (label, text) => h("button", { type: "button", class: "chip", dataset: { needsModel: "" }, onclick: () => send(text()) }, label);
   panel.replaceChildren(
+    chatBar,
     chatBox,
     h("div", { class: "chips" },
       chip("Recommend settings", () => {
@@ -338,6 +456,17 @@ export function initAssistant() {
   );
   drawChat();
   syncControls();
+  restoreChat();
+}
+
+/** On load, carry on with the most recent chat. */
+async function restoreChat() {
+  try {
+    const { chats } = await api("/api/chats");
+    if (chats.length && !state.chat.length && !chatId) await openChat(chats[0].id);
+  } catch {
+    /* start with an empty chat */
+  }
 }
 
 on("config", () => {

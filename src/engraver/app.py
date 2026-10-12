@@ -29,6 +29,7 @@ from .grbl.simulator import GrblSim
 from .library import LibraryError, MaterialLibrary, UserMaterial
 from .library import default_path as library_path
 from .materials import MATERIALS, NEVER
+from .saved import NotFound, SavedError, Shelf, chats_folder, designs_folder, new_id
 
 STATIC_DIR = Path(__file__).parent / "static"
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
@@ -96,6 +97,19 @@ class ChatBody(BaseModel):
     reference: str | None = Field(default=None, max_length=4_000_000, pattern=REFERENCE_RE)
 
 
+class DesignBody(BaseModel):
+    name: str = Field(max_length=200)
+    project: dict
+    thumb: str | None = None
+    # Saving under a name another design already has replaces that one only when asked.
+    replace: bool = False
+
+
+class ChatSaveBody(BaseModel):
+    title: str = Field(max_length=200)
+    messages: list[dict] = Field(max_length=500)
+
+
 def _host_ok(headers, allowed: set[str]) -> bool:
     """Reject DNS-rebinding and cross-site requests: the Host must be this machine,
     and a browser-supplied Origin must be this same server."""
@@ -122,6 +136,8 @@ def create_app(
 ) -> FastAPI:
     store = store or ConfigStore()
     library = MaterialLibrary(library_path(store.path))
+    designs = Shelf(designs_folder(store.path), noun="design", max_items=500, max_bytes=40_000_000)
+    chats = Shelf(chats_folder(store.path), noun="chat", max_items=30, max_bytes=20_000_000, prune=True)
     hub = Hub()
     controller = GrblController(on_event=hub.publish)
     allowed_hosts = LOCAL_HOSTS | set(extra_hosts)
@@ -142,6 +158,8 @@ def create_app(
     app.state.store = store
     app.state.hub = hub
     app.state.library = library
+    app.state.designs = designs
+    app.state.chats = chats
     app.state.github = bugs.GitHub(lambda: store.settings.bugs.token)  # tests swap in a fake
     app.state.last_job = None
     app.state.completion = None  # tests swap in a fake provider here
@@ -179,6 +197,14 @@ def create_app(
 
     @app.exception_handler(LibraryError)
     async def library_error(request: Request, exc: LibraryError):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
+    @app.exception_handler(NotFound)
+    async def not_found(request: Request, exc: NotFound):
+        return JSONResponse({"detail": str(exc)}, status_code=404)
+
+    @app.exception_handler(SavedError)
+    async def saved_error(request: Request, exc: SavedError):
         return JSONResponse({"detail": str(exc)}, status_code=409)
 
     @app.exception_handler(llm.AssistantError)
@@ -235,6 +261,57 @@ def create_app(
     def delete_material(material_id: str):
         library.delete(material_id)
         return {"library": library.all()}
+
+    # --- saved designs -------------------------------------------------------------
+
+    def save_design(design_id: str, body: DesignBody) -> dict:
+        clash = designs.find_name(body.name, other_than=design_id)
+        if clash and not body.replace:
+            raise SavedError(f'You already have a design called "{clash["name"]}".')
+        meta = designs.put(design_id, body.name, body.project, thumb=body.thumb)
+        if clash:
+            designs.delete(clash["id"])
+        return meta
+
+    @app.get("/api/designs")
+    def list_designs():
+        return {"designs": designs.list()}
+
+    @app.get("/api/designs/{design_id}")
+    def get_design(design_id: str):
+        return designs.get(design_id)
+
+    @app.post("/api/designs")
+    def create_design(body: DesignBody):
+        return save_design(new_id(), body)
+
+    @app.put("/api/designs/{design_id}")
+    def put_design(design_id: str, body: DesignBody):
+        return save_design(design_id, body)
+
+    @app.delete("/api/designs/{design_id}")
+    def delete_design(design_id: str):
+        designs.delete(design_id)
+        return {"designs": designs.list()}
+
+    # --- assistant chats -------------------------------------------------------------
+
+    @app.get("/api/chats")
+    def list_chats():
+        return {"chats": chats.list()}
+
+    @app.get("/api/chats/{chat_id}")
+    def get_chat(chat_id: str):
+        return chats.get(chat_id)
+
+    @app.put("/api/chats/{chat_id}")
+    def put_chat(chat_id: str, body: ChatSaveBody):
+        return chats.put(chat_id, body.title or "Chat", body.messages, count=len(body.messages))
+
+    @app.delete("/api/chats/{chat_id}")
+    def delete_chat(chat_id: str):
+        chats.delete(chat_id)
+        return {"chats": chats.list()}
 
     @app.put("/api/config")
     def put_config(patch: dict):
