@@ -194,6 +194,15 @@ await page.click('[data-tool="undo"]');
 await page.waitForFunction(() => document.querySelectorAll(".obj").length === 3);
 await store((s) => s.select([s.state.doc.objects[2].id]));
 
+step("the typeface list previews each font and the chosen one");
+await page.click('[data-tool="text"]');
+const fontStyles = await page.$$eval("dialog select option", (opts) => opts.map((o) => o.style.fontFamily));
+assert.ok(fontStyles.length > 6 && fontStyles.every(Boolean), "every typeface option renders in its own font");
+await page.selectOption("dialog select", { label: "Garamond" });
+assert.match(await page.$eval("dialog select", (el) => el.style.fontFamily), /Garamond/, "closed select shows the chosen font");
+await page.click('dialog button[value=""]');
+await page.waitForFunction(() => !document.querySelector("dialog[open]"));
+
 step("text on a line layer is skipped with an explanation");
 await page.selectOption("#prop-layer", { label: "Cut" });
 p = await preview();
