@@ -166,6 +166,15 @@ assert.ok(Math.min(...burnXs) >= 200 - 0.5 && Math.max(...burnXs) <= 200 + text.
 assert.ok(Math.min(...burnYs) >= 250 - 0.5 && Math.max(...burnYs) <= 250 + text.h + 0.5, "ink stays inside the text box vertically");
 assert.ok(Math.max(...burnXs) - Math.min(...burnXs) > text.w * 0.8, "ink spans most of the box width");
 
+step("selected text can be edited from the property bar");
+await page.click("#prop-edit-text");
+await page.fill("dialog textarea", "Scooby");
+await page.click('dialog button[value="ok"]');
+await page.waitForFunction(() => !document.querySelector("dialog[open]"));
+assert.equal(await store((s) => s.state.doc.objects[2].text.value), "Scooby", "text updated in place");
+assert.equal(await store((s) => s.state.doc.objects.length), 3, "editing does not add an object");
+await page.click('[data-tool="undo"]');
+
 step("text on a line layer is skipped with an explanation");
 await page.selectOption("#prop-layer", { label: "Cut" });
 p = await preview();

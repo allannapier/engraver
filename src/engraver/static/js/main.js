@@ -58,10 +58,29 @@ async function importFiles(files) {
   }
 }
 
+/** The text settings of an object we can edit as text: ours, or a lone <text> element (e.g. from the assistant). */
+function textOf(obj) {
+  if (obj?.kind === "text") return obj.text;
+  if (obj?.kind !== "svg") return null;
+  const root = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${obj.svg}</svg>`, "image/svg+xml").documentElement;
+  const nodes = [...root.children];
+  if (nodes.length !== 1 || nodes[0].localName !== "text" || nodes[0].querySelector("*:not(tspan)")) return null;
+  const node = nodes[0];
+  const lines = [...node.querySelectorAll("tspan")].map((t) => t.textContent);
+  const family = node.getAttribute("font-family") || node.closest("svg")?.getAttribute("font-family");
+  return {
+    value: (lines.length ? lines.join("\n") : node.textContent).trim(),
+    font: family || FONTS[0][1],
+    bold: /bold|[6-9]00/.test(node.getAttribute("font-weight") || ""),
+    italic: /italic|oblique/.test(node.getAttribute("font-style") || ""),
+  };
+}
+
 async function textDialog(existing) {
-  const text = existing ? { ...existing.text } : { value: "", font: FONTS[0][1], bold: false, italic: false };
+  const text = existing ? { ...textOf(existing) } : { value: "", font: FONTS[0][1], bold: false, italic: false };
   const area = h("textarea", { rows: 3, value: text.value, placeholder: "Your text", required: true, style: "width:100%" });
-  const font = h("select", {}, FONTS.map(([label, value]) => h("option", { value, selected: value === text.font }, label)));
+  const fonts = FONTS.some(([, value]) => value === text.font) ? FONTS : [["Current", text.font], ...FONTS];
+  const font = h("select", {}, fonts.map(([label, value]) => h("option", { value, selected: value === text.font }, label)));
   const bold = h("input", { type: "checkbox", checked: text.bold });
   const italic = h("input", { type: "checkbox", checked: text.italic });
   const result = await modal((form) => {
@@ -81,10 +100,10 @@ async function textDialog(existing) {
   if (existing) {
     const content = textContent(next);
     const cx = existing.x + existing.w / 2;
-    const lines = next.value.split("\n").length, before = existing.text.value.split("\n").length;
+    const lines = next.value.split("\n").length, before = text.value.split("\n").length;
     const hNew = (existing.h / before) * lines;
     const wNew = (hNew * content.vb[2]) / content.vb[3];
-    Object.assign(existing, { ...content, text: next, w: wNew, h: hNew, x: cx - wNew / 2, name: next.value.split("\n")[0].slice(0, 24) });
+    Object.assign(existing, { ...content, kind: "text", text: next, w: wNew, h: hNew, x: cx - wNew / 2, name: next.value.split("\n")[0].slice(0, 24) });
   } else {
     select([place(objectFromText(next), "fill").id]);
   }
@@ -151,7 +170,7 @@ function initTools() {
     event.target.value = "";
   });
   onDoubleClick((obj) => {
-    if (obj?.kind === "text") textDialog(obj);
+    if (textOf(obj)) textDialog(obj);
   });
 
   // Drag files onto the canvas, or paste an SVG or picture.
@@ -202,6 +221,7 @@ function initProps() {
   const sync = () => {
     const picked = selected();
     bar.hidden = picked.length === 0;
+    $("prop-edit-text").hidden = !(picked.length === 1 && textOf(picked[0]));
     $("stage-hint").hidden = picked.length > 0;
     if (!picked.length) return;
     const box = aabb(picked);
@@ -250,6 +270,7 @@ function initProps() {
       $("stage").focus({ preventScroll: true });
     });
   }
+  $("prop-edit-text").addEventListener("click", () => textDialog(selected()[0]));
   lock.addEventListener("click", () => {
     state.ui.lockAspect = !state.ui.lockAspect;
     emit("ui");
