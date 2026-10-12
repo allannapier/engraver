@@ -229,6 +229,13 @@ section + section { border-top: 1px solid var(--line); padding-top: 14px; }
 .chip:disabled { opacity: .45; cursor: default; }
 .composer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .composer textarea { width: 100%; }
+.composer-actions { display: flex; justify-content: space-between; gap: 8px; }
+.ref-attach { display: flex; align-items: center; gap: 10px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; }
+.ref-attach[hidden] { display: none; }
+.ref-attach img { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; background: #fff; flex: none; }
+.ref-text { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 12px; color: var(--muted); }
+.ref-text strong { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-ref { display: block; max-width: 120px; max-height: 120px; margin-bottom: 6px; border-radius: 4px; background: #fff; }
 .msg code { font-family: var(--num); font-size: 12.5px; background: var(--raised); padding: 1px 4px; border-radius: 3px; }
 .msg.user code { background: var(--chrome); }
 .panel#tab-assistant { gap: 10px; }

@@ -11,6 +11,11 @@ const panel = document.getElementById("tab-assistant");
 let busy = false;
 let chatBox = null;
 let composer = null;
+let attachBox = null;
+// A picture the person attached to guide the assistant: { url, name }. It goes with every message until removed.
+let reference = null;
+
+const REFERENCE_MAX_PX = 1024; // long side; plenty for a model to read, and keeps each request small
 
 const clamp = (value, lo, hi) => Math.min(hi, Math.max(lo, value));
 const num = (value) => (typeof value === "number" && Number.isFinite(value) ? value : null);
@@ -151,6 +156,62 @@ async function applyActions(actions) {
   return notes;
 }
 
+// --- reference picture ------------------------------------------------------------
+
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error(`Couldn't open ${file.name || "that picture"}. Try a PNG or JPEG.`)); };
+    img.src = url;
+  });
+}
+
+/** Scales the picture down and flattens it onto white, so transparent areas read as blank stock. */
+async function shrink(file) {
+  const img = await loadImage(file);
+  const scale = Math.min(1, REFERENCE_MAX_PX / Math.max(img.naturalWidth, img.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const g = canvas.getContext("2d");
+  g.fillStyle = "#fff";
+  g.fillRect(0, 0, canvas.width, canvas.height);
+  g.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.85);
+}
+
+async function attach(files) {
+  const file = [...files].find((f) => f.type.startsWith("image/"));
+  if (!file) {
+    addError("That isn't a picture. Attach a PNG, JPEG, WebP or GIF.");
+    return;
+  }
+  try {
+    reference = { url: await shrink(file), name: file.name || "Pasted picture" };
+  } catch (error) {
+    addError(error.message);
+  }
+  drawAttachment();
+}
+
+function addError(message) {
+  state.chat.push({ role: "assistant", content: message, error: true });
+  drawChat();
+}
+
+function drawAttachment() {
+  if (!attachBox) return;
+  attachBox.hidden = !reference;
+  if (!reference) return attachBox.replaceChildren();
+  attachBox.replaceChildren(
+    h("img", { src: reference.url, alt: "" }),
+    h("span", { class: "ref-text" }, h("strong", {}, reference.name), h("span", {}, "Sent with each message until you remove it.")),
+    h("button", { type: "button", class: "btn ghost small", onclick: () => { reference = null; drawAttachment(); composer?.focus(); } }, "Remove"),
+  );
+}
+
 // --- chat -----------------------------------------------------------------------
 
 /** The two bits of Markdown models use anyway, as real elements. Everything else stays plain text. */
@@ -164,6 +225,7 @@ function rich(text) {
 
 function bubble(message) {
   return h("div", { class: `msg ${message.role}${message.error ? " error" : ""}` },
+    message.picture && h("img", { class: "msg-ref", src: message.picture, alt: "Reference picture" }),
     message.role === "assistant" && !message.error ? rich(message.content) : message.content,
     (message.notes || []).map((note) => h("span", { class: "did" }, note)),
     message.undoable && h("span", { class: "did" }, "Undo reverses these changes."));
@@ -187,7 +249,8 @@ function drawChat() {
 async function send(text) {
   text = text.trim();
   if (!text || busy) return;
-  state.chat.push({ role: "user", content: text });
+  const picture = reference?.url || null;
+  state.chat.push({ role: "user", content: text, picture });
   busy = true;
   drawChat();
   syncControls();
@@ -197,7 +260,7 @@ async function send(text) {
       content: m.notes?.length ? `${m.content}\n[Changes applied in the app: ${m.notes.join("; ")}]` : m.content,
     }));
     const image = state.config.llm?.vision !== false && state.doc.objects.length ? await snapshotPng() : null;
-    const reply = await post("/api/ai/chat", { messages, context: context(), image });
+    const reply = await post("/api/ai/chat", { messages, context: context(), image, reference: picture });
     const notes = await applyActions(reply.actions || []);
     state.chat.push({ role: "assistant", content: reply.text || "Done.", notes, undoable: notes.length > 0 });
   } catch (error) {
@@ -227,6 +290,25 @@ export function initAssistant() {
         send(text);
       }
     },
+    onpaste: (event) => {
+      const files = [...(event.clipboardData?.files || [])];
+      if (!files.some((f) => f.type.startsWith("image/"))) return;
+      event.preventDefault();
+      attach(files);
+    },
+  });
+  const picker = h("input", {
+    type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", hidden: true,
+    onchange: (event) => { attach(event.target.files); event.target.value = ""; },
+  });
+  attachBox = h("div", { class: "ref-attach", hidden: true });
+  panel.addEventListener("dragover", (event) => {
+    if ([...event.dataTransfer.types].includes("Files")) event.preventDefault();
+  });
+  panel.addEventListener("drop", (event) => {
+    if (!event.dataTransfer.files.length) return;
+    event.preventDefault();
+    attach(event.dataTransfer.files);
   });
   const chip = (label, text) => h("button", { type: "button", class: "chip", dataset: { needsModel: "" }, onclick: () => send(text()) }, label);
   panel.replaceChildren(
@@ -248,7 +330,11 @@ export function initAssistant() {
         composer.value = "";
         send(text);
       },
-    }, composer, h("button", { class: "btn primary", dataset: { needsModel: "" } }, "Send")),
+    }, attachBox, composer,
+    h("div", { class: "composer-actions" },
+      h("button", { type: "button", class: "btn ghost", title: "Attach a picture to guide the assistant. You can also paste or drop one here.", dataset: { needsModel: "" }, onclick: () => picker.click() }, "Add picture"),
+      h("button", { class: "btn primary", dataset: { needsModel: "" } }, "Send")),
+    picker),
   );
   drawChat();
   syncControls();

@@ -85,10 +85,15 @@ class FrameBody(BaseModel):
     dot_power: float = Field(default=0, ge=0, le=100)
 
 
+REFERENCE_RE = r"^data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$"
+
+
 class ChatBody(BaseModel):
     messages: list[dict]
     context: dict = {}
     image: str | None = None
+    # A picture the person attached to guide the assistant. The browser scales it down first.
+    reference: str | None = Field(default=None, max_length=4_000_000, pattern=REFERENCE_RE)
 
 
 def _host_ok(headers, allowed: set[str]) -> bool:
@@ -361,6 +366,7 @@ def create_app(
             body.image,
             completion=app.state.completion,
             library=library.as_prompt(),
+            reference=body.reference,
         )
 
     @app.post("/api/ai/test")
