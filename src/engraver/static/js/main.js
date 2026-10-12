@@ -61,7 +61,8 @@ async function importFiles(files) {
 async function textDialog(existing) {
   const text = existing ? { ...existing.text } : { value: "", font: FONTS[0][1], bold: false, italic: false };
   const area = h("textarea", { rows: 3, value: text.value, placeholder: "Your text", required: true, style: "width:100%" });
-  const font = h("select", {}, FONTS.map(([label, value]) => h("option", { value, selected: value === text.font }, label)));
+  const font = h("select", { style: `font-family:${text.font}` }, FONTS.map(([label, value]) => h("option", { value, selected: value === text.font, style: `font-family:${value}` }, label)));
+  font.addEventListener("change", () => { font.style.fontFamily = font.value; });
   const bold = h("input", { type: "checkbox", checked: text.bold });
   const italic = h("input", { type: "checkbox", checked: text.italic });
   const result = await modal((form) => {
