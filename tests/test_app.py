@@ -464,3 +464,10 @@ def test_frame_estimate_counts_the_trip_there_and_back(client):
     est = wait_for(client, lambda s: s["job"]["state"] == "running")["job"]["est_seconds"]
     assert 5.5 < est < 7
     client.post("/api/job/stop")
+
+
+def test_silent_tool_reply_gets_a_description():
+    from engraver.llm import _describe
+
+    text = _describe([{"type": "add_design"}, {"type": "set_layer"}, {"type": "set_layer"}])
+    assert "added a design" in text and text.count("changed layer settings") == 1
