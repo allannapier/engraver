@@ -40,6 +40,11 @@ Writing SVG for a laser
 - Fill-mode designs: solid black (#000) shapes on a transparent background. Keep detail bolder than about 0.3 mm at the final size. Use greys only when the layer will use grayscale or dither.
 - Line-mode designs: fill="none" stroke="#000". The laser follows the centre of every stroke once, whatever the stroke width, so never stack duplicate lines, and close any outline that is meant to be cut out. Text does not work in line mode; draw letter shapes as paths or put the text on a fill layer.
 - Draw with care: balanced composition, smooth curves, consistent stroke weights. A design that will be cut out needs its pieces connected or deliberately separate.
+- Plan before drawing. Count what is needed (every piece, every repeat), then work out the grid or positions as numbers and place every shape from those numbers. Don't eyeball coordinates.
+- The app crops each design to what it draws and scales that to width_mm, so two separate designs only line up if you tie them together. When parts on different layers must line up (an engraving on a cut-out piece, a score line inside a cut outline):
+  - Draw them in one shared coordinate system: the same viewBox, with each engraving centred on the same coordinates as the outline it belongs to.
+  - Add or replace the outline first with its size and position. Then add or replace the other part with align_with set to the outline's design id (or, if you added it in this same reply, its name). The app then places it so the shared coordinates coincide, ignoring width_mm, x_mm and y_mm.
+  - When you change one part, replace the other with align_with too, so they stay matched. Each design's SVG is in the app state below.
 - Think about the real object. Ask for the finished size if it matters and wasn't given, otherwise pick a sensible size for the item and say what you chose.
 
 Choosing settings
@@ -55,11 +60,20 @@ Choosing settings
 
 Style
 - Write plain text. The app shows **bold** and `code` and nothing else: no headings, tables, links or nested lists.
-- Always write a reply, even when you call tools: say what you changed and why in a sentence or two. Never answer with tool calls alone.
+- Always write a reply, even when you call tools: say what you changed and why in a sentence or two, and anything the person should check. Never answer with tool calls alone. Every tool also takes a note: one plain sentence for the person on what that change does.
 - Treat the conversation as a discussion. If the person asks a question, floats an idea, asks for your opinion or the request is open-ended, answer in words and suggest an approach without calling tools; make the change once they agree or ask for it.
 - Be brief and practical. Say what you did and anything the person needs to decide. Don't describe SVG code or list every value you set unless asked.
 - When changing an existing design, use replace_design on that design rather than adding a new one, and keep what the person didn't ask to change.
 """
+
+NOTE = {"type": "string", "description": "One sentence for the person: what this change does and why."}
+ALIGN_WITH = {
+    "type": "string",
+    "description": (
+        "Id of a design drawn in the same viewBox coordinates (or the name of one added earlier in this reply). "
+        "This design is placed so the shared coordinates line up with it; width_mm, x_mm and y_mm are ignored."
+    ),
+}
 
 TOOLS = [
     {
@@ -84,8 +98,10 @@ TOOLS = [
                     },
                     "x_mm": {"type": "number", "description": "Left edge, mm from the bed's left. Omit to centre."},
                     "y_mm": {"type": "number", "description": "Front edge, mm from the bed's front. Omit to centre."},
+                    "align_with": ALIGN_WITH,
+                    "note": NOTE,
                 },
-                "required": ["name", "svg", "width_mm", "mode"],
+                "required": ["name", "svg", "width_mm", "mode", "note"],
             },
         },
     },
@@ -93,15 +109,20 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "replace_design",
-            "description": "Replace the artwork of an existing design, keeping its position, width and layer.",
+            "description": (
+                "Replace the artwork of an existing design, keeping its centre, width and layer "
+                "(or its placement relative to align_with, if given)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "design_id": {"type": "string"},
                     "svg": {"type": "string", "description": "Complete standalone SVG document."},
                     "name": {"type": "string"},
+                    "align_with": ALIGN_WITH,
+                    "note": NOTE,
                 },
-                "required": ["design_id", "svg"],
+                "required": ["design_id", "svg", "note"],
             },
         },
     },
@@ -120,8 +141,9 @@ TOOLS = [
                     "height_mm": {"type": "number"},
                     "rotation_deg": {"type": "number"},
                     "layer_id": {"type": "string", "description": "Move the design to this layer."},
+                    "note": NOTE,
                 },
-                "required": ["design_id"],
+                "required": ["design_id", "note"],
             },
         },
     },
@@ -140,8 +162,9 @@ TOOLS = [
                     "passes": {"type": "integer"},
                     "interval": {"type": "number", "description": "fill only: mm between scan lines"},
                     "image_mode": {"type": "string", "enum": ["threshold", "dither", "grayscale"]},
+                    "note": NOTE,
                 },
-                "required": ["name", "mode", "speed", "power"],
+                "required": ["name", "mode", "speed", "power", "note"],
             },
         },
     },
@@ -161,8 +184,9 @@ TOOLS = [
                     "passes": {"type": "integer"},
                     "interval": {"type": "number"},
                     "image_mode": {"type": "string", "enum": ["threshold", "dither", "grayscale"]},
+                    "note": NOTE,
                 },
-                "required": ["layer_id"],
+                "required": ["layer_id", "note"],
             },
         },
     },
@@ -198,6 +222,19 @@ def _context_text(context: dict) -> str:
     selected = ctx.get("selected")
     if selected and isinstance(selected.get("svg"), str) and len(selected["svg"]) > MAX_SVG_CONTEXT:
         ctx["selected"] = {**selected, "svg": selected["svg"][:MAX_SVG_CONTEXT] + "…[truncated]"}
+    # Every design's artwork goes along so parts can be matched up, within a budget; the rest just say so.
+    designs = ctx.get("designs")
+    if isinstance(designs, list):
+        budget = MAX_SVG_CONTEXT
+        kept = []
+        for design in designs:
+            if isinstance(design, dict) and isinstance(design.get("svg"), str):
+                if len(design["svg"]) <= budget:
+                    budget -= len(design["svg"])
+                else:
+                    design = {**design, "svg": "(too large to include; select it to see it)"}
+            kept.append(design)
+        ctx["designs"] = kept
     return "Current state of the app (for reference, not written by the person):\n" + json.dumps(
         ctx, separators=(",", ":")
     )
@@ -300,7 +337,10 @@ def _svg_fallback(text: str, context: dict) -> tuple[str, list[dict]]:
 
 
 def _describe(actions: list[dict]) -> str:
-    """A reply for when the model changed things but said nothing."""
+    """A reply for when the model changed things but said nothing: its per-change notes, or a plain list."""
+    notes = [a["note"].strip() for a in actions if isinstance(a.get("note"), str) and a["note"].strip()]
+    if notes:
+        return " ".join(dict.fromkeys(n if n.endswith((".", "!", "?")) else n + "." for n in notes))
     verbs = {
         "add_design": "added a design",
         "replace_design": "replaced a design",
