@@ -366,15 +366,18 @@ export function onDoubleClick(fn) {
 }
 
 /** A PNG of the bed and the designs on it, for the assistant to look at. */
-export async function snapshotPng(maxSide = 1024) {
-  const b = bed();
+/** The canvas as a picture. `area` ({x, y, w, h} in mm) crops it, e.g. to the designs for a thumbnail. */
+export async function snapshotPng(maxSide = 1024, area = null) {
+  const bb = bed();
+  const b = area ? { w: area.w, h: area.h } : bb;
+  const vx = area ? area.x : 0, vy = area ? area.y : 0;
   const clone = objectLayer.cloneNode(true);
   for (const node of clone.querySelectorAll(".hit")) node.remove();
-  const markup = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${b.w} ${b.h}"><style>.mode-line .art :is(path,rect,circle,ellipse,line,polyline,polygon){fill:none!important;stroke:#c22!important;stroke-width:1.5px!important;vector-effect:non-scaling-stroke}</style><rect width="${b.w}" height="${b.h}" fill="#fff"/>${new XMLSerializer().serializeToString(clone)}</svg>`;
+  const markup = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vx} ${vy} ${b.w} ${b.h}"><style>.mode-line .art :is(path,rect,circle,ellipse,line,polyline,polygon){fill:none!important;stroke:#c22!important;stroke-width:1.5px!important;vector-effect:non-scaling-stroke}</style><rect x="${vx}" y="${vy}" width="${b.w}" height="${b.h}" fill="#fff"/>${new XMLSerializer().serializeToString(clone)}</svg>`;
   const scale = maxSide / Math.max(b.w, b.h);
   const canvas = document.createElement("canvas");
-  canvas.width = Math.round(b.w * scale);
-  canvas.height = Math.round(b.h * scale);
+  canvas.width = Math.max(1, Math.round(b.w * scale));
+  canvas.height = Math.max(1, Math.round(b.h * scale));
   const url = URL.createObjectURL(new Blob([markup], { type: "image/svg+xml" }));
   try {
     const img = new Image();
@@ -384,7 +387,7 @@ export async function snapshotPng(maxSide = 1024) {
       img.src = url;
     });
     canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/png");
+    return canvas.toDataURL(area ? "image/jpeg" : "image/png", 0.85);
   } catch {
     return null;
   } finally {
