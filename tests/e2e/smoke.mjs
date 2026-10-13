@@ -692,6 +692,51 @@ await ready();
 await page.waitForSelector(".obj");
 assert.equal(await store((s) => s.state.doc.objects.length), 1);
 
+step("assistant parts drawn in one viewBox line up across layers");
+await page.route("**/api/state", async (route) => {
+  const response = await route.fetch();
+  const body = await response.json();
+  body.config.llm.model = "test/model";
+  await route.fulfill({ response, json: body });
+});
+await page.unroute("**/api/ai/chat");
+await page.route("**/api/ai/chat", async (route) => {
+  asked = route.request().postDataJSON();
+  await route.fulfill({
+    json: {
+      text: "Two tokens with a mark engraved on each.",
+      actions: [
+        { type: "add_design", name: "Token outlines", mode: "line", width_mm: 60, x_mm: 100, y_mm: 100, note: "Cut outlines.",
+          svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 24"><g fill="none" stroke="#000"><circle cx="12" cy="12" r="12"/><circle cx="48" cy="12" r="12"/></g></svg>' },
+        { type: "add_design", name: "Token marks", mode: "fill", width_mm: 999, align_with: "Token outlines", note: "Marks.",
+          svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 24"><rect x="10" y="10" width="4" height="4"/><rect x="46" y="10" width="4" height="4"/></svg>' },
+      ],
+    },
+  });
+});
+await page.reload();
+await ready();
+await page.click('[data-tab="assistant"]');
+await page.fill("#tab-assistant textarea", "Two tokens with a mark on each");
+await page.press("#tab-assistant textarea", "Enter");
+await page.waitForFunction(() => window.__store.state.doc.objects.some((o) => o.name === "Token marks"));
+assert.ok(asked.context.designs.every((d) => d.kind !== "svg" || d.svg?.startsWith("<svg")), "every design's SVG goes to the assistant");
+const [outline, marks] = await store((s) => ["Token outlines", "Token marks"].map((n) => {
+  const o = s.state.doc.objects.find((d) => d.name === n);
+  return { x: o.x, y: o.y, w: o.w, h: o.h };
+}));
+near(outline.w, 60, 0.01);
+near(marks.w, 40, 0.01); // keeps the outline's scale, not its own width_mm
+near(marks.x - outline.x, 10, 0.01);
+near(marks.y - outline.y, 10, 0.01);
+const lined = await page.locator(".msg.assistant .did").allTextContents();
+assert.ok(lined.some((n) => n.includes('lined up with "Token outlines"')), lined.join(" | "));
+await page.keyboard.press("Escape");
+await page.locator("#stage").focus();
+await page.keyboard.press("Control+z");
+assert.equal(await store((s) => s.state.doc.objects.length), 1);
+await page.unroute("**/api/state");
+
 await page.click("#connect");
 await waitStatus((s) => !s.connected);
 await browser.close();

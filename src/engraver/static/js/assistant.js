@@ -29,6 +29,8 @@ const frontLeft = (o) => {
   return { x: box.x0, y: bed().h - box.y1, w: box.w, h: box.h };
 };
 
+const svgDocument = (o) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${o.vb.join(" ")}">${o.svg}</svg>`;
+
 function context() {
   const material = state.materials.find((m) => m.id === state.ui.materialId);
   const picked = selected();
@@ -45,10 +47,13 @@ function context() {
     })),
     designs: state.doc.objects.map((o) => {
       const p = frontLeft(o);
-      return { id: o.id, name: o.name, kind: o.kind, layer_id: o.layerId, x_mm: +p.x.toFixed(1), y_mm: +p.y.toFixed(1), width_mm: +o.w.toFixed(1), height_mm: +o.h.toFixed(1), rotation_deg: o.rot };
+      return {
+        id: o.id, name: o.name, kind: o.kind, layer_id: o.layerId, x_mm: +p.x.toFixed(1), y_mm: +p.y.toFixed(1), width_mm: +o.w.toFixed(1), height_mm: +o.h.toFixed(1), rotation_deg: o.rot,
+        ...(o.kind === "svg" && o.id !== one?.id ? { svg: svgDocument(o) } : {}),
+      };
     }),
     selected: one
-      ? { id: one.id, name: one.name, svg: one.kind === "image" ? "(a bitmap image; its pixels can't be edited as SVG)" : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${one.vb.join(" ")}">${one.svg}</svg>` }
+      ? { id: one.id, name: one.name, svg: one.kind === "image" ? "(a bitmap image; its pixels can't be edited as SVG)" : svgDocument(one) }
       : null,
     selected_ids: picked.map((o) => o.id),
   };
@@ -89,30 +94,73 @@ function layerPatch(layer, a) {
   return done.join(", ");
 }
 
-async function applyAction(a) {
+/**
+ * Places `o` (content already set) so its viewBox units land where the same units of `partner` are.
+ * Each design is cropped to its artwork, so this is what keeps parts drawn in one coordinate system together.
+ */
+function alignTo(o, partner) {
+  const k = partner.w / partner.vb[2]; // mm per viewBox unit
+  o.w = o.vb[2] * k;
+  o.h = o.vb[3] * k;
+  // Centres in the shared, unrotated frame, then turned about the partner's centre by its rotation.
+  const pc = { x: partner.x + partner.w / 2, y: partner.y + partner.h / 2 };
+  const dx = (o.vb[0] + o.vb[2] / 2 - (partner.vb[0] + partner.vb[2] / 2)) * k;
+  const dy = (o.vb[1] + o.vb[3] / 2 - (partner.vb[1] + partner.vb[3] / 2)) * k;
+  const t = ((partner.rot || 0) * Math.PI) / 180;
+  const cx = pc.x + dx * Math.cos(t) - dy * Math.sin(t);
+  const cy = pc.y + dx * Math.sin(t) + dy * Math.cos(t);
+  o.x = cx - o.w / 2;
+  o.y = cy - o.h / 2;
+  o.rot = partner.rot || 0;
+}
+
+function partnerFor(a, added) {
+  if (typeof a.align_with !== "string" || !a.align_with) return null;
+  const partner = objectById(a.align_with) || added.get(a.align_with);
+  if (!partner) throw new Error(`it asked to line up with "${a.align_with}", which isn't on the canvas`);
+  if (partner.kind !== "svg") throw new Error("it asked to line up with a picture, which has no shared coordinates");
+  return partner;
+}
+
+async function applyAction(a, added = new Map()) {
   const b = bed();
   if (a.type === "add_design") {
+    const partner = partnerFor(a, added);
     const o = await objectFromSvgText(String(a.svg || ""), String(a.name || "Design").slice(0, 40));
-    const w = clamp(num(a.width_mm) ?? Math.min(o.w, 80), 1, b.w);
-    Object.assign(o, { h: (o.h * w) / o.w, w, layerId: layerFor(a).id });
-    const c = viewCenter();
-    o.x = c.x - o.w / 2;
-    o.y = c.y - o.h / 2;
-    moveTo(o, num(a.x_mm), num(a.y_mm));
+    o.layerId = layerFor(a).id;
+    if (partner) {
+      alignTo(o, partner);
+    } else {
+      const w = clamp(num(a.width_mm) ?? Math.min(o.w, 80), 1, b.w);
+      Object.assign(o, { h: (o.h * w) / o.w, w });
+      const c = viewCenter();
+      o.x = c.x - o.w / 2;
+      o.y = c.y - o.h / 2;
+      moveTo(o, num(a.x_mm), num(a.y_mm));
+    }
     state.doc.objects.push(o);
+    added.set(o.name, o);
     select([o.id]);
-    return `Added "${o.name}", ${o.w.toFixed(0)} × ${o.h.toFixed(0)} mm, on ${layerById(o.layerId).name}`;
+    return `Added "${o.name}", ${o.w.toFixed(0)} × ${o.h.toFixed(0)} mm, on ${layerById(o.layerId).name}${partner ? `, lined up with "${partner.name}"` : ""}`;
   }
   if (a.type === "replace_design") {
     const o = objectById(a.design_id);
     if (!o) throw new Error("it pointed at a design that isn't on the canvas");
+    const partner = partnerFor(a, added);
+    if (partner === o) throw new Error("it asked a design to line up with itself");
     const content = contentFromSvg(await sanitizeSvg(String(a.svg || "")));
-    const cx = o.x + o.w / 2, cy = o.y + o.h / 2;
-    const h2 = (o.w * content.vb[3]) / content.vb[2];
-    Object.assign(o, { kind: "svg", svg: content.svg, vb: content.vb, h: h2, x: cx - o.w / 2, y: cy - h2 / 2 });
+    if (partner) {
+      Object.assign(o, { kind: "svg", svg: content.svg, vb: content.vb });
+      alignTo(o, partner);
+    } else {
+      const cx = o.x + o.w / 2, cy = o.y + o.h / 2;
+      const h2 = (o.w * content.vb[3]) / content.vb[2];
+      Object.assign(o, { kind: "svg", svg: content.svg, vb: content.vb, h: h2, x: cx - o.w / 2, y: cy - h2 / 2 });
+    }
     delete o.text;
     if (typeof a.name === "string" && a.name.trim()) o.name = a.name.trim().slice(0, 40);
-    return `Updated "${o.name}"`;
+    added.set(o.name, o);
+    return `Updated "${o.name}"${partner ? `, lined up with "${partner.name}"` : ""}`;
   }
   if (a.type === "transform_design") {
     const o = objectById(a.design_id);
@@ -148,10 +196,11 @@ async function applyAction(a) {
 
 async function applyActions(actions) {
   const notes = [];
+  const added = new Map(); // designs added or replaced in this reply, by name, for align_with
   let changed = false;
   for (const action of actions) {
     try {
-      notes.push(await applyAction(action));
+      notes.push(await applyAction(action, added));
       changed = true;
     } catch (error) {
       notes.push(`Skipped one change: ${error.message}`);
