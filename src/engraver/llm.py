@@ -55,6 +55,8 @@ Choosing settings
 
 Style
 - Write plain text. The app shows **bold** and `code` and nothing else: no headings, tables, links or nested lists.
+- Always write a reply, even when you call tools: say what you changed and why in a sentence or two. Never answer with tool calls alone.
+- Treat the conversation as a discussion. If the person asks a question, floats an idea, asks for your opinion or the request is open-ended, answer in words and suggest an approach without calling tools; make the change once they agree or ask for it.
 - Be brief and practical. Say what you did and anything the person needs to decide. Don't describe SVG code or list every value you set unless asked.
 - When changing an existing design, use replace_design on that design rather than adding a new one, and keep what the person didn't ask to change.
 """
@@ -297,6 +299,19 @@ def _svg_fallback(text: str, context: dict) -> tuple[str, list[dict]]:
     return text, actions
 
 
+def _describe(actions: list[dict]) -> str:
+    """A reply for when the model changed things but said nothing."""
+    verbs = {
+        "add_design": "added a design",
+        "replace_design": "replaced a design",
+        "transform_design": "moved or resized a design",
+        "add_layer": "added a layer",
+        "set_layer": "changed layer settings",
+    }
+    done = list(dict.fromkeys(verbs.get(a["type"], "made a change") for a in actions))
+    return "I " + ", ".join(done) + ". The model didn't explain; ask what it did or why."
+
+
 async def chat(
     settings: LLMSettings,
     machine: MachineProfile,
@@ -365,7 +380,7 @@ async def chat(
     if not actions:
         text, actions = _svg_fallback(text, context)
     if not text and actions:
-        text = "Done."
+        text = _describe(actions)
     return {"text": text, "actions": actions}
 
 
