@@ -12,14 +12,15 @@ const layerLine = (l) => `${l.name}: ${l.mode}, ${l.speed} mm/min, ${l.power}%${
  * `lines` replaces the per-layer list when there are too many layers to read.
  * Returns true if the job was started.
  */
-export async function confirmAndStart(job, warnings = [], { lines, startsFrom } = {}) {
-  const summary = await post("/api/job/preview", { job });
+export async function confirmAndStart(job, warnings = [], { lines, startsFrom, summary, requestedBy } = {}) {
+  summary ||= await post("/api/job/preview", { job });
   const all = [...warnings, ...summary.warnings];
   const rows = lines || job.layers.map(layerLine);
   const from = startsFrom || (job.origin_mode === "origin" ? "the origin (design's front-left corner)" : "its position on the bed");
   const answer = await modal((form) => {
     fill(form,
       h("h1", {}, "Start burning?"),
+      requestedBy ? h("p", { class: "note warn" }, `${requestedBy} set this job up. It only starts if you click Start burning.`) : null,
       h("dl", { class: "facts" },
         h("dt", {}, "Size"), h("dd", {}, `${summary.width} × ${summary.height} mm`),
         h("dt", {}, "Time"), h("dd", {}, `about ${formatDuration(summary.est_seconds)}`),

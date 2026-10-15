@@ -15,6 +15,7 @@ import { initSetup } from "./setup.js";
 import { initAssistant } from "./assistant.js";
 import { initBugReport } from "./bugreport.js";
 import { initDesigns, cleanProject, saveDesign } from "./designs.js";
+import { handleMcp } from "./mcp.js";
 
 installDiagnostics(); // before anything else runs, so start-up errors are caught too
 
@@ -507,6 +508,10 @@ async function boot() {
     } else if (event.type === "log") {
       addLog(event);
       if (event.kind === "error") toast(event.text, "error");
+    } else if (event.type === "mcp") {
+      handleMcp(event);
+    } else if (event.type === "mcp-note") {
+      toast(event.text);
     }
   }, (linked) => {
     if (!linked && state.status.connected) toast("Lost contact with Engraver's server.", "error");

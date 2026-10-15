@@ -28,6 +28,7 @@ dependencies = [
 
 [project.scripts]
 engraver = "engraver.cli:main"
+engraver-mcp = "engraver.mcp:stdio_main"
 
 [project.urls]
 Homepage = "https://github.com/allannapier/engraver"

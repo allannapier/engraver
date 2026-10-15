@@ -112,11 +112,32 @@ The repository defaults to `allannapier/engraver` and can be changed in Setup. T
 - The origin is stored with `G10 L20` (GRBL's G54 offset), so it survives a stop and a power cycle. The Laser tab shows when one is active and lets you clear it.
 - The built-in material values are starting points for a 10 W diode, not measured on your machine. Use the test grid to replace them with your own.
 
+## Using it from Claude Code and other MCP clients
+
+While Engraver is running, it is also an MCP server at `http://127.0.0.1:8642/mcp`. Add it to Claude Code with:
+
+```bash
+claude mcp add --transport http engraver http://127.0.0.1:8642/mcp
+```
+
+Clients that only start local programs (stdio) can run `engraver-mcp` instead, which passes messages on to the running app.
+
+Keep Engraver open in your browser: the canvas lives there, and every change shows up on it and can be undone like any other edit.
+
+A client can:
+
+- read the canvas, its layers and the machine's status, and get a picture of the bed
+- add, change, move and delete designs and layers (the same tools the assistant has), and read your materials
+- save, open and start new designs
+- connect, jog, set or go to the origin, frame the job, and pause or stop a job
+
+It can't start or resume a job. **request_job_start** opens the usual "Start burning?" confirmation in the app, marked with the client's name, and nothing burns until you click **Start burning**. Framing uses the laser only if you switched on the 2 % dot in the Laser tab.
+
 ## Safety
 
 A 10 W diode laser blinds and starts fires. Wear goggles rated for 455 nm, ventilate, never leave a running job, and keep to the "never laser" list in the Design tab (PVC and vinyl release chlorine gas).
 
-The server only listens on `127.0.0.1` and rejects requests that don't come from its own page, so other websites can't reach it.
+The server only listens on `127.0.0.1` and rejects requests that don't come from its own page, so other websites can't reach it. Programs on your own computer can, including MCP clients: they can move the head, but only you can start a job.
 
 You run this software at your own risk. It comes with no warranty, the built-in settings are untested starting points, and nothing in it replaces watching the machine. See the [license](LICENSE).
 
@@ -134,6 +155,7 @@ src/engraver/
   saved.py          saved designs and assistant chats
   bugs.py           bug reports: diagnostics, redaction, filing the GitHub issue
   llm.py            assistant prompt, tools, LiteLLM call
+  mcp.py            MCP server: tools for Claude Code and others, relayed to the open page
   config.py         saved settings
   static/           the browser app (plain ES modules, no build step)
 ```

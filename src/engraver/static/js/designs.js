@@ -191,6 +191,30 @@ async function showDesigns() {
   }, { wide: true });
 }
 
+// --- for MCP clients (see mcp.js): the same actions, without the dialogs ----------
+
+/** Save over the open design, or under `name` as a new one. A name in use is replaced only when asked. */
+export async function saveForTool({ name = "", replace = false } = {}) {
+  name = String(name || "").trim().slice(0, 80);
+  let meta;
+  if (!name) {
+    if (!current) throw new Error("This design hasn't been saved yet, so it needs a name.");
+    meta = await api(`/api/designs/${current.id}`, { method: "PUT", body: await body(current.name) });
+  } else {
+    try {
+      meta = await post("/api/designs", await body(name, Boolean(replace)));
+    } catch (error) {
+      if (/already have a design/.test(error.message)) throw new Error(`${error.message} Pass replace: true to replace it.`);
+      throw error;
+    }
+  }
+  setCurrent({ id: meta.id, name: meta.name, dirty: false });
+  return meta;
+}
+
+export const openForTool = (id) => openSaved({ id: String(id || "") });
+export const newForTool = () => newDesign();
+
 export function initDesigns() {
   nameBox = document.getElementById("design-name");
   document.getElementById("project-save").addEventListener("click", act(saveDesign));
