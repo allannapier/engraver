@@ -737,6 +737,67 @@ await page.keyboard.press("Control+z");
 assert.equal(await store((s) => s.state.doc.objects.length), 1);
 await page.unroute("**/api/state");
 
+step("an MCP client edits the canvas through the page, frames, and can only ask to start");
+let rpcId = 0;
+const mcp = async (method, params) => {
+  const res = await fetch(`${BASE}/mcp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params }),
+  });
+  return (await res.json()).result;
+};
+const tool = async (name, args = {}) => {
+  const result = await mcp("tools/call", { name, arguments: args });
+  const first = result.content[0];
+  return { error: result.isError, text: first.text, data: first.type === "text" && /^[[{]/.test(first.text) ? JSON.parse(first.text) : null, image: first.type === "image" ? first.data : null };
+};
+await mcp("initialize", { protocolVersion: "2025-06-18", clientInfo: { name: "claude-code", version: "1" }, capabilities: {} });
+const countBefore = await store((s) => s.state.doc.objects.length);
+let r = await tool("add_design", {
+  name: "Badge", mode: "fill", width_mm: 30, x_mm: 20, y_mm: 25,
+  svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5"/><script>alert(1)</script></svg>',
+});
+assert.equal(r.error, false, r.text);
+const badgeId = r.data.design_id;
+const badge = await store((s, id) => {
+  const o = s.state.doc.objects.find((d) => d.id === id);
+  return { name: o.name, svg: o.svg, w: o.w };
+}, badgeId);
+assert.equal(badge.name, "Badge");
+near(badge.w, 30, 0.01);
+assert.ok(!/script/i.test(badge.svg), "client SVG is sanitised");
+await page.locator(".toast", { hasText: 'Claude Code: Added "Badge"' }).first().waitFor();
+r = await tool("get_state");
+const listed = r.data.canvas.designs.find((d) => d.id === badgeId);
+near(listed.x_mm, 20, 0.01);
+near(listed.y_mm, 25, 0.01);
+assert.equal(r.data.machine.connected, true);
+r = await tool("set_layer", { layer_id: listed.layer_id, speed: 4000, power: 35 });
+assert.equal(r.error, false, r.text);
+assert.deepEqual(await store((s, id) => { const l = s.layerById(id); return [l.speed, l.power]; }, listed.layer_id), [4000, 35]);
+r = await tool("transform_design", { design_id: "nope", x_mm: 5 });
+assert.ok(r.error && /isn't on the canvas/.test(r.text), r.text);
+r = await tool("get_canvas_image");
+assert.ok(r.image && r.image.length > 1000, "canvas picture comes back as a PNG");
+r = await tool("frame_job");
+assert.equal(r.error, false, r.text);
+await waitStatus((s) => s.job?.kind === "frame" && s.job.state === "done");
+r = await tool("request_job_start");
+assert.equal(r.error, false, r.text);
+await page.waitForSelector("dialog[open]");
+assert.match(await page.textContent("dialog"), /Claude Code set this job up/);
+r = await tool("delete_design", { design_id: badgeId });
+assert.ok(r.error && /dialog/.test(r.text), "nothing else happens while the confirmation is open");
+await page.click('dialog button[value=""]');
+assert.equal(await store((s) => s.state.status.job.kind), "frame", "nothing starts without the click");
+r = await tool("delete_design", { design_id: badgeId });
+assert.equal(r.error, false, r.text);
+assert.equal(await store((s) => s.state.doc.objects.length), countBefore);
+await page.locator("#stage").focus();
+await page.keyboard.press("Control+z");
+assert.equal(await store((s) => s.state.doc.objects.length), countBefore + 1, "each change is one undo step");
+
 await page.click("#connect");
 await waitStatus((s) => !s.connected);
 await browser.close();

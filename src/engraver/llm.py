@@ -217,7 +217,8 @@ def system_prompt(machine: MachineProfile, library: str = "") -> str:
     )
 
 
-def _context_text(context: dict) -> str:
+def trim_context(context: dict) -> dict:
+    """The canvas state with its artwork kept within MAX_SVG_CONTEXT characters."""
     ctx = dict(context or {})
     selected = ctx.get("selected")
     if selected and isinstance(selected.get("svg"), str) and len(selected["svg"]) > MAX_SVG_CONTEXT:
@@ -235,8 +236,12 @@ def _context_text(context: dict) -> str:
                     design = {**design, "svg": "(too large to include; select it to see it)"}
             kept.append(design)
         ctx["designs"] = kept
+    return ctx
+
+
+def _context_text(context: dict) -> str:
     return "Current state of the app (for reference, not written by the person):\n" + json.dumps(
-        ctx, separators=(",", ":")
+        trim_context(context), separators=(",", ":")
     )
 
 

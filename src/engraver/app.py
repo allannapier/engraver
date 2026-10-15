@@ -13,15 +13,15 @@ import time
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
-from . import __version__, bugs, llm
+from . import __version__, bugs, llm, mcp
 from .config import ConfigStore
 from .gcode import JobError, JobSpec, MachineProfile, build_job, frame_gcode
 from .grbl.controller import GrblController, MachineError, list_ports
@@ -41,7 +41,7 @@ class Hub:
 
     def __init__(self):
         self.loop: asyncio.AbstractEventLoop | None = None
-        self.clients: set[asyncio.Queue] = set()
+        self.clients: dict[asyncio.Queue, None] = {}  # in the order the tabs connected
         self.log: deque[dict] = deque(maxlen=300)
 
     def publish(self, event: dict) -> None:
@@ -60,6 +60,16 @@ class Hub:
                 client.put_nowait(event)
             except asyncio.QueueFull:
                 pass
+
+    def send_to_page(self, event: dict) -> bool:
+        """Give an event to one tab only, the most recently opened: for work only one tab should do."""
+        for client in reversed(self.clients):
+            try:
+                client.put_nowait(event)
+                return True
+            except asyncio.QueueFull:
+                continue
+        return False
 
 
 class ConnectBody(BaseModel):
@@ -103,6 +113,13 @@ class DesignBody(BaseModel):
     thumb: str | None = None
     # Saving under a name another design already has replaces that one only when asked.
     replace: bool = False
+
+
+class McpReplyBody(BaseModel):
+    id: str = Field(max_length=64)
+    ok: bool
+    result: Any = None
+    error: str | None = Field(default=None, max_length=4000)
 
 
 class ChatSaveBody(BaseModel):
@@ -508,7 +525,7 @@ def create_app(
             return
         await socket.accept()
         client: asyncio.Queue = asyncio.Queue(maxsize=400)
-        hub.clients.add(client)
+        hub.clients[client] = None
         # Watch for the tab closing while waiting for events; otherwise this handler
         # would sit on the queue forever and keep the server from shutting down.
         closed = asyncio.ensure_future(_until_closed(socket))
@@ -525,7 +542,124 @@ def create_app(
             pass
         finally:
             closed.cancel()
-            hub.clients.discard(client)
+            hub.clients.pop(client, None)
+
+    # --- MCP: tools like Claude Code working the app -----------------------------------
+
+    def ports_list() -> list[str]:
+        found, _ = list_ports()
+        return [p["device"] for p in found] + [SIM_PORT]
+
+    def machine_state() -> dict:
+        status = controller.snapshot()
+        settings = status.pop("settings", {})
+        status.pop("mpos", None)
+        state = {
+            "machine": {
+                **status,
+                "origin_set": any(abs(v) > 0.001 for v in status["wco"]),
+                "laser_mode": settings.get("32") != 0,
+            },
+            "bed_mm": [machine().bed_w, machine().bed_h],
+        }
+        if not status["connected"]:
+            state["ports"] = ports_list()
+        return state
+
+    def tool(fn):
+        """A machine tool: runs off the event loop; returns {"text", "note"} (note is shown in the page)."""
+
+        async def run(args: dict) -> dict:
+            return await asyncio.to_thread(fn, args)
+
+        return run
+
+    @tool
+    def connect_machine(args: dict) -> dict:
+        port = str(args.get("port", "")).strip()
+        if port not in ports_list():
+            raise mcp.ToolError(f'No port called "{port}". Ports: {", ".join(ports_list())}.')
+        connect(ConnectBody(port=port))
+        name = "the simulator" if port == SIM_PORT else port
+        return {"text": f"Connecting to {name}. Check get_state for when it is idle.", "note": f"connected to {name}"}
+
+    @tool
+    def jog_tool(args: dict) -> dict:
+        body = JogBody(dx=args.get("dx_mm", 0), dy=args.get("dy_mm", 0), feed=args.get("feed"))
+        jog(body)
+        return {"text": f"Jogging {body.dx:g}, {body.dy:g} mm.", "note": f"moved the head {body.dx:g}, {body.dy:g} mm"}
+
+    @tool
+    def origin_tool(args: dict) -> dict:
+        action = args.get("action")
+        if action not in ("set", "go", "clear"):
+            raise mcp.ToolError('action must be "set", "go" or "clear".')
+        origin("goto" if action == "go" else action)
+        done = {"set": "set the origin here", "go": "moved the head to the origin", "clear": "cleared the origin"}[
+            action
+        ]
+        return {"text": done[0].upper() + done[1:] + ".", "note": done}
+
+    @tool
+    def pause_tool(args: dict) -> dict:
+        controller.pause()
+        return {"text": "Paused. Only the person can resume it, from the app.", "note": "paused the job"}
+
+    @tool
+    def stop_tool(args: dict) -> dict:
+        controller.stop()
+        return {"text": "Stopping: the laser is off and the head keeps its position.", "note": "stopped the job"}
+
+    async def list_materials_tool(args: dict) -> dict:
+        return {"text": mcp.materials_text(library.as_prompt())}
+
+    async def list_saved_tool(args: dict) -> dict:
+        found = [{"id": d["id"], "name": d["name"], "updated": d.get("updated")} for d in designs.list()]
+        return {"text": found or "No saved designs yet."}
+
+    bridge = mcp.Bridge(hub)
+    mcp_server = mcp.Server(
+        bridge,
+        machine={
+            "connect_machine": connect_machine,
+            "jog": jog_tool,
+            "origin": origin_tool,
+            "pause_job": pause_tool,
+            "stop_job": stop_tool,
+            "list_materials": list_materials_tool,
+            "list_saved_designs": list_saved_tool,
+        },
+        machine_state=lambda: asyncio.to_thread(machine_state),
+        notify=lambda text: hub.publish({"type": "mcp-note", "text": text}),
+        errors=(MachineError, JobError, LibraryError, NotFound, SavedError, ValidationError),
+    )
+    app.state.mcp = mcp_server
+
+    @app.post("/mcp")
+    async def mcp_endpoint(request: Request):
+        try:
+            payload = await request.json()
+        except ValueError:
+            return JSONResponse(mcp._error(None, -32700, "Parse error"), status_code=400)
+        if isinstance(payload, list):
+            replies = [r for r in [await mcp_server.handle(m) for m in payload] if r]
+        else:
+            reply = await mcp_server.handle(payload)
+            replies = reply
+        if not replies:
+            return Response(status_code=202)
+        return JSONResponse(replies)
+
+    @app.get("/mcp")
+    @app.delete("/mcp")
+    def mcp_no_stream():
+        # No server-initiated messages and no sessions, so there is no stream to open or end.
+        return Response(status_code=405, headers={"Allow": "POST"})
+
+    @app.post("/api/mcp/reply")
+    def mcp_reply(body: McpReplyBody):
+        bridge.reply(body.id, body.ok, body.result, body.error)
+        return {"ok": True}
 
     app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
     return app

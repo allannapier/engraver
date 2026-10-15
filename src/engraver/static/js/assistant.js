@@ -31,7 +31,7 @@ const frontLeft = (o) => {
 
 const svgDocument = (o) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${o.vb.join(" ")}">${o.svg}</svg>`;
 
-function context() {
+export function context() {
   const material = state.materials.find((m) => m.id === state.ui.materialId);
   const picked = selected();
   const one = picked.length === 1 ? picked[0] : null;
@@ -122,7 +122,7 @@ function partnerFor(a, added) {
   return partner;
 }
 
-async function applyAction(a, added = new Map()) {
+export async function applyAction(a, added = new Map()) {
   const b = bed();
   if (a.type === "add_design") {
     const partner = partnerFor(a, added);

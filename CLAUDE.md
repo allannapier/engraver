@@ -12,7 +12,8 @@ Local browser app that drives a GRBL diode laser (Atomstack A10). Python/FastAPI
 
 ## Rules that must keep holding
 
-- The assistant only returns canvas and layer edits (`llm.TOOLS`). Never add a tool or route that lets model output move the head or fire the laser.
+- The assistant only returns canvas and layer edits (`llm.TOOLS`). Never add a tool or route that lets its output move the head or fire the laser.
+- MCP clients (`mcp.py`) may connect, jog, set or go to the origin, frame (laser off, or the person's 2 % dot), pause and stop. They never start or resume a job, send console commands, home or unlock: `request_job_start` only opens `run.confirmAndStart` in the page, and the job starts when the person clicks Start burning. Canvas edits go through the assistant's `applyAction`, one undo step each.
 - Stop is feed hold, wait for motion to end, then soft reset (`GrblController._begin_halt`). Don't reset mid-motion: GRBL alarms and loses position. "Ended" is judged only from status reports that arrived after the hold, and the hold is re-sent if one shows motion (a hold that lands before motion starts is ignored by GRBL).
 - Any GRBL error on a job line halts the job.
 - The server binds to loopback only, and `_host_ok` rejects foreign Host and Origin headers. Keep both.
