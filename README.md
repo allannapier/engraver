@@ -3,6 +3,8 @@
 [![CI](https://github.com/allannapier/engraver/actions/workflows/ci.yml/badge.svg)](https://github.com/allannapier/engraver/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+**Site:** https://allannapier.github.io/engraver/
+
 A local browser app for designing and running jobs on an Atomstack A10 (or any GRBL diode laser). A small Python server talks to the laser over USB; the app runs in your browser at `127.0.0.1`.
 
 - **Canvas**: import SVGs and pictures, add text and shapes, then move, scale and rotate them on a to-scale bed.
@@ -181,6 +183,8 @@ Browser test (needs Node):
 ENGRAVER_SIM_SPEED=20 ENGRAVER_BUG_DRY_RUN=1 ENGRAVER_CONFIG=/tmp/engraver-e2e.json uv run engraver --no-browser &
 node tests/e2e/smoke.mjs
 ```
+
+The site's screenshots (`docs/img/`) are taken the same way: with the server running on a fresh `ENGRAVER_CONFIG` and `HOME`, `node docs/screenshots.mjs`.
 
 The browser test runs Chromium with a fake camera that plays a made-up picture of the bed (`tests/e2e/fakecamera.mjs`), calibrates it by clicking the marks, and checks the corrected photo against where the board really is.
 
