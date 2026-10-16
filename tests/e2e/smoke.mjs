@@ -276,6 +276,8 @@ await page.click("#job-start");
 await page.click('dialog button[value="go"]');
 await waitStatus((s) => s.job.kind === "job" && s.job.state === "running");
 await page.waitForFunction(() => document.querySelector(".jobbar").dataset.live === "true");
+// The Cut layer has two passes, so the bar says which one is burning.
+await page.waitForFunction(() => /Cut.*pass [12] of 2/.test(document.getElementById("job-title").textContent));
 await shot("05-running");
 
 step("pause, resume and stop");
@@ -299,6 +301,7 @@ await page.click('dialog button[value="go"]');
 await waitStatus((s) => s.job.kind === "job" && s.job.state === "done");
 assert.equal(await page.getAttribute("#job-bar", "aria-valuenow"), "100");
 assert.match(await page.textContent("#job-title"), /finished/);
+assert.doesNotMatch(await page.textContent("#job-title"), /pass/);
 
 step("saving a layer's settings makes your own copy of the material");
 await page.click('[data-tab="design"]');

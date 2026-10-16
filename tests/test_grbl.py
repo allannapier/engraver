@@ -257,3 +257,37 @@ def test_stop_while_idle_and_while_paused(rig):
     ctl.stop()
     wait_for(lambda: ctl.job.state == "stopped" and ctl.state == "Idle", message="stopped from pause")
     assert sim.state == "Idle"
+
+
+def test_stage_follows_the_pass_being_burned(rig):
+    from engraver.gcode import JobSpec, MachineProfile, build_job
+
+    ctl, sim, _ = rig
+    sim.speed = 20
+    square = [[(10, 10), (30, 10), (30, 30), (10, 30), (10, 10)]]
+    job = JobSpec(
+        layers=[{"name": "Cut", "mode": "line", "speed": 1200, "power": 50, "passes": 3, "polylines": square}]
+    )
+    result = build_job(job, MachineProfile())
+    ctl.start(result.lines, line_seconds=result.line_seconds, stages=result.stages, line_stages=result.line_stages)
+    seen = []
+    deadline = time.monotonic() + 10
+    while ctl.job.state != "done" and time.monotonic() < deadline:
+        stage = ctl.job.public()["stage"]
+        burned = len(sim.burns)
+        if stage and (not seen or seen[-1][0] != stage["pass"]):
+            seen.append((stage["pass"], burned))
+        time.sleep(0.005)
+    assert ctl.job.state == "done"
+    assert [number for number, _ in seen] == [1, 2, 3]
+    # A pass is only reported once the one before it is burned: 4 sides per pass.
+    for number, burned in seen:
+        assert burned >= 4 * (number - 1)
+    assert ctl.job.public()["stage"] is None
+
+
+def test_jobs_without_stages_report_none(rig):
+    ctl, _sim, _ = rig
+    ctl.start(square(), stages=[{"layer": "x"}], line_stages=[0])  # mismatched lengths are dropped
+    assert ctl.job.public()["stage"] is None
+    wait_for(lambda: ctl.job.state == "done", message="job done")
