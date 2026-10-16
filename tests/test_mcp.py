@@ -67,9 +67,11 @@ def test_initialize_and_list_tools(client):
 
     tools = {t["name"]: t for t in rpc(client, "tools/list").json()["result"]["tools"]}
     assert {"get_state", "add_design", "set_layer", "jog", "frame_job", "request_job_start", "stop_job"} <= set(tools)
-    # The design tools are the assistant's, with the note made optional.
-    assert "note" not in tools["add_design"]["inputSchema"]["properties"]
-    assert "note" not in tools["set_layer"]["inputSchema"]["required"]
+    assert tools["add_design"]["inputSchema"]["required"] == ["name", "svg", "width_mm", "mode"]
+    assert "align_with" in tools["replace_design"]["inputSchema"]["properties"]
+    # Laser design guidance goes to every client.
+    text = result["instructions"]
+    assert "90 %" in text and "align_with" in text and "shared viewBox" in text
 
 
 def test_no_tool_can_start_resume_or_send_raw_gcode(client):
@@ -269,3 +271,15 @@ def test_stdio_main(monkeypatch, capsys):
     monkeypatch.setattr(mcp, "relay", lambda line, url: f"{url} {line.strip()}")
     mcp.stdio_main(["http://x/mcp"])
     assert capsys.readouterr().out == 'http://x/mcp {"jsonrpc":"2.0","id":1,"method":"ping"}\n'
+
+
+def test_state_carries_design_svgs_within_a_budget():
+    small = "<svg>" + "a" * 100 + "</svg>"
+    big = "<svg>" + "b" * mcp.MAX_SVG_CONTEXT + "</svg>"
+    ctx = mcp.trim_context(
+        {"designs": [{"id": "1", "svg": small}, {"id": "2", "svg": big}, {"id": "3"}], "selected": {"svg": big}}
+    )
+    assert ctx["designs"][0]["svg"] == small
+    assert "too large" in ctx["designs"][1]["svg"]
+    assert "svg" not in ctx["designs"][2]
+    assert ctx["selected"]["svg"].endswith("…[truncated]")

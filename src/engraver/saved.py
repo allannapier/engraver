@@ -1,7 +1,7 @@
-"""Things the person keeps between sessions: saved designs and assistant chats.
+"""Things the person keeps between sessions: saved designs.
 
 Each item is one JSON file in a folder next to the settings file
-(`~/.engraver/designs/`, `~/.engraver/chats/`). The server stores what it is
+(`~/.engraver/designs/`). The server stores what it is
 given and checks only its shape and size; the browser cleans and sanitises
 everything again when it loads an item, as it does for a project file.
 """
@@ -36,16 +36,14 @@ def new_id() -> str:
 class Shelf:
     """A folder of named JSON items, newest first.
 
-    `max_items` caps the folder. When `prune` is set, saving past the cap
-    removes the oldest items; otherwise it refuses.
+    `max_items` caps the folder: saving a new item past it is refused.
     """
 
-    def __init__(self, folder: Path, *, noun: str, max_items: int, max_bytes: int, prune: bool = False):
+    def __init__(self, folder: Path, *, noun: str, max_items: int, max_bytes: int):
         self.folder = folder
         self.noun = noun
         self.max_items = max_items
         self.max_bytes = max_bytes
-        self.prune = prune
         self._lock = threading.Lock()
 
     def _path(self, item_id: str) -> Path:
@@ -67,8 +65,6 @@ class Shelf:
         meta = {"id": item_id, "name": raw["name"], "updated": float(raw.get("updated") or 0)}
         if isinstance(raw.get("thumb"), str):
             meta["thumb"] = raw["thumb"]
-        if isinstance(raw.get("count"), int):
-            meta["count"] = raw["count"]
         return meta
 
     def _all(self) -> list[dict]:
@@ -94,7 +90,7 @@ class Shelf:
             raise NotFound(f"That {self.noun} doesn't exist any more.")
         return {**self._meta(item_id, raw), "data": raw["data"]}
 
-    def put(self, item_id: str, name: str, data, *, thumb: str | None = None, count: int | None = None) -> dict:
+    def put(self, item_id: str, name: str, data, *, thumb: str | None = None) -> dict:
         path = self._path(item_id)
         name = " ".join(str(name).split())[:80]
         if not name:
@@ -104,8 +100,6 @@ class Shelf:
         record = {"name": name, "updated": time.time(), "data": data}
         if thumb:
             record["thumb"] = thumb
-        if count is not None:
-            record["count"] = count
         text = json.dumps(record)
         if len(text) > self.max_bytes:
             mb = self.max_bytes // 1_000_000
@@ -114,12 +108,7 @@ class Shelf:
             existing = self._all()
             others = [m for m in existing if m["id"] != item_id]
             if len(others) >= self.max_items:
-                if not self.prune:
-                    raise SavedError(
-                        f"You have {len(others)} saved {self.noun}s, the most it keeps. Delete some first."
-                    )
-                for old in others[self.max_items - 1 :]:
-                    (self.folder / f"{old['id']}.json").unlink(missing_ok=True)
+                raise SavedError(f"You have {len(others)} saved {self.noun}s, the most it keeps. Delete some first.")
             self.folder.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(".tmp")
             tmp.write_text(text)
@@ -141,8 +130,3 @@ class Shelf:
 def designs_folder(config_path: Path) -> Path:
     override = os.environ.get("ENGRAVER_DESIGNS")
     return Path(override) if override else config_path.with_name("designs")
-
-
-def chats_folder(config_path: Path) -> Path:
-    override = os.environ.get("ENGRAVER_CHATS")
-    return Path(override) if override else config_path.with_name("chats")

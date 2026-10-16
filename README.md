@@ -10,7 +10,7 @@ A local browser app for designing and running jobs on an Atomstack A10 (or any G
 - **Saved designs**: **Save** (Ctrl+S) keeps the canvas and its layers in the app; **Open** lists them with a preview. They live in `~/.engraver/designs/`. **Download file** and **Open a file** move a design between computers.
 - **Materials**: burn a test card on scrap, pick the best square, and keep the result in your own material library.
 - **Laser control**: connect, jog, set and go to origin, frame, start, pause, resume, stop.
-- **Assistant**: add your LLM provider and it can draw designs, rework the selected one, and recommend settings.
+- **AI over MCP**: Claude Code (or any MCP client) can draw designs, rework them, set layers and frame the job. Only you can start it.
 - **Simulator**: a built-in fake laser, so everything can be tried without the machine.
 
 ## Run it
@@ -62,25 +62,11 @@ The built-in materials are generic starting points. To get settings for your mac
 3. Jog to a piece of scrap, **Set origin here** in the Laser tab, then **Frame test** and **Burn test**. The card's front-left corner lands on the origin, and the values are engraved on it so you can keep it.
 4. Click the square that came out best and **Save**. It's stored under that material as "picked from a test".
 
-After that, a layer's **Presets** menu applies the saved engrave, score or cut setting, and can save a layer's current settings back to the material. **Edit** lets you type settings in by hand. The assistant is given your library and prefers it over the generic table.
+After that, a layer's **Presets** menu applies the saved engrave, score or cut setting, and can save a layer's current settings back to the material. **Edit** lets you type settings in by hand. MCP clients read your library and are told to prefer it over the generic table.
 
 Your materials live in `~/.engraver/materials.json`, next to the settings file.
 
-## The assistant
-
-In **Setup**, enter a model in LiteLLM form (`provider/model`, for example `anthropic/claude-sonnet-5-5` or `ollama/your-local-model`), an API key, and a base URL if the model is local or self-hosted. **Save and test** checks it.
-
-Then use the **Assistant** tab:
-
-- "A 90 mm coaster with a mountain line drawing, engraved, with a cut circle around it"
-- Select a design: "make the lines bolder and drop the border"
-- "Recommend settings for 3 mm birch ply"
-
-It acts by editing the canvas and the layer settings, and each reply is one undo step. It has no way to move the head or fire the laser.
-
-The chat is kept when you reload. **New chat** clears it and starts again; **Chats** reopens earlier ones (the last 30 are kept, in `~/.engraver/chats/`).
-
-Settings live in `~/.engraver/config.json` (override with `ENGRAVER_CONFIG`). The API key is stored there in plain text, readable only by you, and is sent only to the provider you chose.
+Settings live in `~/.engraver/config.json` (override with `ENGRAVER_CONFIG`).
 
 ## Reporting a bug
 
@@ -92,9 +78,8 @@ Settings live in `~/.engraver/config.json` (override with `ENGRAVER_CONFIG`). Th
 - the last job sent (settings, size, first lines of G-code)
 - the laser console, server errors with tracebacks, browser errors, failed requests and recent clicks
 - layers and designs on the canvas, without pictures
-- optionally, the last few assistant messages
 
-You always see the full text first and can edit or delete any of it. API keys and tokens are stripped out, and your home folder's path is shortened to `~`. It never records what you type into text boxes.
+You always see the full text first and can edit or delete any of it. Tokens are stripped out, and your home folder's path is shortened to `~`. It never records what you type into text boxes.
 
 How it files, in order of preference:
 
@@ -112,7 +97,9 @@ The repository defaults to `allannapier/engraver` and can be changed in Setup. T
 - The origin is stored with `G10 L20` (GRBL's G54 offset), so it survives a stop and a power cycle. The Laser tab shows when one is active and lets you clear it.
 - The built-in material values are starting points for a 10 W diode, not measured on your machine. Use the test grid to replace them with your own.
 
-## Using it from Claude Code and other MCP clients
+## Using it with Claude Code and other MCP clients
+
+Engraver has no AI built in: you bring your own through MCP, so a Claude subscription works and nothing needs an API key. Setup shows the command below with a Copy button.
 
 While Engraver is running, it is also an MCP server at `http://127.0.0.1:8642/mcp`. Add it to Claude Code with:
 
@@ -122,12 +109,14 @@ claude mcp add --transport http engraver http://127.0.0.1:8642/mcp
 
 Clients that only start local programs (stdio) can run `engraver-mcp` instead, which passes messages on to the running app.
 
-Keep Engraver open in your browser: the canvas lives there, and every change shows up on it and can be undone like any other edit.
+Keep Engraver open in your browser: the canvas lives there, and every change shows up on it and can be undone like any other edit. The server tells the client how to draw for a laser (closed outlines for cuts, solid black for engraving, lining parts up across layers) and to keep power at or below 90 %.
+
+Try, for example: "a 90 mm coaster with a mountain line drawing, engraved, with a cut circle around it", or "recommend settings for 3 mm birch ply".
 
 A client can:
 
 - read the canvas, its layers and the machine's status, and get a picture of the bed
-- add, change, move and delete designs and layers (the same tools the assistant has), and read your materials
+- add, change, move and delete designs and layers and read your materials
 - save, open and start new designs
 - connect, jog, set or go to the origin, frame the job, and pause or stop a job
 
@@ -152,12 +141,11 @@ src/engraver/
   gcode.py          job description -> G-code (vector, raster, frame)
   materials.py      generic starting-point table and never-laser list
   library.py        your own materials (saved and tested settings)
-  saved.py          saved designs and assistant chats
+  saved.py          saved designs
   bugs.py           bug reports: diagnostics, redaction, filing the GitHub issue
-  llm.py            assistant prompt, tools, LiteLLM call
   mcp.py            MCP server: tools for Claude Code and others, relayed to the open page
   config.py         saved settings
-  static/           the browser app (plain ES modules, no build step)
+  static/           the browser app (plain ES modules, no build step); js/canvasedit.js applies MCP canvas edits
 ```
 
 The browser does the geometry: line layers are traced from the live SVG into polylines, fill layers are rendered to a bitmap at the layer's line gap. The server turns those into G-code and streams it with GRBL's character-counting protocol.
@@ -165,7 +153,7 @@ The browser does the geometry: line layers are traced from the live SVG into pol
 ## Tests
 
 ```bash
-uv run pytest                      # controller vs simulator, G-code, API, assistant with a fake provider
+uv run pytest                      # controller vs simulator, G-code, API, MCP
 uv run pytest --cov                # the same, with coverage (fails under 85 %)
 uv run ruff check .                # lint
 uv run ruff format .               # format

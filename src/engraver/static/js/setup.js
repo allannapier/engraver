@@ -1,7 +1,7 @@
-// Setup tab: the assistant's provider and the machine profile.
+// Setup tab: connecting an AI client over MCP, bug reports and the machine profile.
 
 import { state, on, emit } from "./store.js";
-import { api, post } from "./api.js";
+import { api } from "./api.js";
 import { h, toast, act } from "./ui.js";
 
 const panel = document.getElementById("tab-setup");
@@ -43,33 +43,30 @@ function bugSection() {
   );
 }
 
+function mcpSection() {
+  const command = `claude mcp add --transport http engraver ${location.origin}/mcp`;
+  return h("section", {},
+    h("h2", {}, "AI assistant"),
+    h("p", { class: "note", style: "margin-bottom:10px" },
+      "Claude Code and other MCP clients can draw designs, set layers, jog and frame here while this page is open. Only you can start a job. To add Engraver to Claude Code, run:"),
+    h("pre", { class: "command" }, h("code", {}, command)),
+    h("div", { class: "row", style: "margin-top:8px" },
+      h("button", {
+        type: "button", class: "btn small",
+        onclick: act(async () => {
+          await navigator.clipboard.writeText(command);
+          toast("Command copied.");
+        }),
+      }, "Copy command")),
+    h("p", { class: "note", style: "margin-top:8px" }, "Clients that only start local programs can run ", h("code", {}, "engraver-mcp"), " instead."),
+  );
+}
+
 function build() {
-  const llm = state.config.llm || {};
   const machine = state.config.machine || {};
   const reported = state.status.settings || {};
   const travel = [Number(reported["130"]), Number(reported["131"])];
   const travelDiffers = state.status.connected && travel[0] > 0 && travel[1] > 0 && (Math.abs(travel[0] - machine.bed_w) > 0.5 || Math.abs(travel[1] - machine.bed_h) > 0.5);
-
-  const model = h("input", { type: "text", value: llm.model || "", placeholder: "provider/model", list: "model-examples", autocomplete: "off", spellcheck: "false" });
-  const key = h("input", { type: "password", value: "", placeholder: llm.api_key_set ? `Saved (${llm.api_key_hint || "hidden"}). Type to replace` : "Paste your API key", autocomplete: "off" });
-  const base = h("input", { type: "url", value: llm.api_base || "", placeholder: "Only for local or self-hosted models" });
-  const vision = h("input", { type: "checkbox", checked: llm.vision !== false });
-  const llmValues = () => ({ model: model.value.trim(), api_key: key.value.trim(), api_base: base.value.trim(), vision: vision.checked });
-  const testButton = h("button", {
-    type: "button", class: "btn small",
-    onclick: act(async () => {
-      testButton.disabled = true;
-      testButton.textContent = "Testing…";
-      try {
-        await save({ llm: llmValues() });
-        await post("/api/ai/test");
-        toast("The assistant is connected.");
-      } finally {
-        testButton.disabled = false;
-        testButton.textContent = "Save and test";
-      }
-    }),
-  }, "Save and test");
 
   const num = (name, step = 1) => h("input", { type: "number", step, min: 0, value: machine[name] ?? "", dataset: { machine: name } });
   const machineForm = h("form", {
@@ -108,27 +105,7 @@ function build() {
   );
 
   panel.replaceChildren(
-    h("section", {},
-      h("h2", {}, "Assistant"),
-      h("p", { class: "note", style: "margin-bottom:10px" }, "Use any provider LiteLLM supports. The key stays on this computer and is only sent to the provider you choose."),
-      h("div", { style: "display:grid;gap:10px" },
-        h("label", { class: "field" }, "Model", model),
-        h("datalist", { id: "model-examples" },
-          ["anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5", "anthropic/claude-haiku-4-5-20251001", "openai/", "gemini/", "openrouter/", "ollama/"].map((value) => h("option", { value }))),
-        h("label", { class: "field" }, "API key", key),
-        h("label", { class: "field" }, "Base URL", base),
-        h("label", { class: "check" }, vision, "Let the assistant see the canvas"),
-        h("div", { class: "row" },
-          testButton,
-          llm.api_key_set && h("button", {
-            type: "button", class: "btn small ghost",
-            onclick: act(async () => {
-              await save({ llm: { clear_api_key: true } });
-              toast("API key removed.");
-            }),
-          }, "Remove key")),
-      ),
-    ),
+    mcpSection(),
     bugSection(),
     h("section", {},
       h("h2", {}, "Machine"),

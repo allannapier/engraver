@@ -2,7 +2,7 @@
 // over the live-updates socket (only to the most recently opened tab) and waits for
 // the answer on /api/mcp/reply. See mcp.py for what a client can and can't do.
 //
-// Canvas edits go through the assistant's own code, so they're sanitised and placed
+// Canvas edits go through canvasedit.js, so they're sanitised and placed
 // the same way, and each call is one undo step. Starting a job only opens the usual
 // confirmation: nothing burns until the person clicks Start burning.
 
@@ -12,7 +12,7 @@ import { toast } from "./ui.js";
 import { snapshotPng } from "./stage.js";
 import { buildJob } from "./job.js";
 import { confirmAndStart, frame, machineReady } from "./run.js";
-import { context, applyAction } from "./assistant.js";
+import { context, applyAction } from "./canvasedit.js";
 import { saveForTool, openForTool, newForTool } from "./designs.js";
 
 const dialogOpen = () => document.getElementById("dialog")?.open;

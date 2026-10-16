@@ -12,7 +12,6 @@ import { confirmAndStart, frame } from "./run.js";
 import { initDesign } from "./design.js";
 import { initLaser, addLog } from "./laser.js";
 import { initSetup } from "./setup.js";
-import { initAssistant } from "./assistant.js";
 import { initBugReport } from "./bugreport.js";
 import { initDesigns, cleanProject, saveDesign } from "./designs.js";
 import { handleMcp } from "./mcp.js";
@@ -60,7 +59,7 @@ async function importFiles(files) {
   }
 }
 
-/** The text settings of an object we can edit as text: ours, or <text> elements, possibly inside a group (e.g. from the assistant). */
+/** The text settings of an object we can edit as text: ours, or <text> elements, possibly inside a group (e.g. from an MCP client). */
 function textOf(obj) {
   if (obj?.kind === "text") return obj.text;
   if (obj?.kind !== "svg") return null;
@@ -174,7 +173,7 @@ function initTools() {
     set("center", any);
     $("stage-hint").textContent = state.doc.objects.length
       ? "Scroll to zoom. Hold Space and drag to pan."
-      : "Import an SVG or picture, add text or a shape, or ask the assistant for a design.";
+      : "Import an SVG or picture, add text or a shape, or ask Claude Code for one over MCP.";
   };
   on("doc", sync);
   on("selection", sync);
@@ -495,7 +494,6 @@ async function boot() {
   initDesign();
   initLaser();
   initSetup();
-  initAssistant();
   initBugReport();
   emit("config");
   emit("status");

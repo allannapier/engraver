@@ -1,4 +1,4 @@
-"""The local web server: static app, machine API, job API, assistant API.
+"""The local web server: static app, machine API, job API, MCP endpoint.
 
 Only reachable from this computer. Requests are checked so that a web page
 on another site can't call the API and drive the laser.
@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
-from . import __version__, bugs, llm, mcp
+from . import __version__, bugs, mcp
 from .config import ConfigStore
 from .gcode import JobError, JobSpec, MachineProfile, build_job, frame_gcode
 from .grbl.controller import GrblController, MachineError, list_ports
@@ -29,7 +29,7 @@ from .grbl.simulator import GrblSim
 from .library import LibraryError, MaterialLibrary, UserMaterial
 from .library import default_path as library_path
 from .materials import MATERIALS, NEVER
-from .saved import NotFound, SavedError, Shelf, chats_folder, designs_folder, new_id
+from .saved import NotFound, SavedError, Shelf, designs_folder, new_id
 
 STATIC_DIR = Path(__file__).parent / "static"
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
@@ -96,17 +96,6 @@ class FrameBody(BaseModel):
     dot_power: float = Field(default=0, ge=0, le=100)
 
 
-REFERENCE_RE = r"^data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$"
-
-
-class ChatBody(BaseModel):
-    messages: list[dict]
-    context: dict = {}
-    image: str | None = None
-    # A picture the person attached to guide the assistant. The browser scales it down first.
-    reference: str | None = Field(default=None, max_length=4_000_000, pattern=REFERENCE_RE)
-
-
 class DesignBody(BaseModel):
     name: str = Field(max_length=200)
     project: dict
@@ -120,11 +109,6 @@ class McpReplyBody(BaseModel):
     ok: bool
     result: Any = None
     error: str | None = Field(default=None, max_length=4000)
-
-
-class ChatSaveBody(BaseModel):
-    title: str = Field(max_length=200)
-    messages: list[dict] = Field(max_length=500)
 
 
 def _host_ok(headers, allowed: set[str]) -> bool:
@@ -154,7 +138,6 @@ def create_app(
     store = store or ConfigStore()
     library = MaterialLibrary(library_path(store.path))
     designs = Shelf(designs_folder(store.path), noun="design", max_items=500, max_bytes=40_000_000)
-    chats = Shelf(chats_folder(store.path), noun="chat", max_items=30, max_bytes=20_000_000, prune=True)
     hub = Hub()
     controller = GrblController(on_event=hub.publish)
     allowed_hosts = LOCAL_HOSTS | set(extra_hosts)
@@ -176,10 +159,8 @@ def create_app(
     app.state.hub = hub
     app.state.library = library
     app.state.designs = designs
-    app.state.chats = chats
     app.state.github = bugs.GitHub(lambda: store.settings.bugs.token)  # tests swap in a fake
     app.state.last_job = None
-    app.state.completion = None  # tests swap in a fake provider here
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
@@ -223,10 +204,6 @@ def create_app(
     @app.exception_handler(SavedError)
     async def saved_error(request: Request, exc: SavedError):
         return JSONResponse({"detail": str(exc)}, status_code=409)
-
-    @app.exception_handler(llm.AssistantError)
-    async def assistant_error(request: Request, exc: llm.AssistantError):
-        return JSONResponse({"detail": str(exc)}, status_code=400)
 
     def machine() -> MachineProfile:
         """The saved profile, corrected by what the connected controller reports.
@@ -310,25 +287,6 @@ def create_app(
     def delete_design(design_id: str):
         designs.delete(design_id)
         return {"designs": designs.list()}
-
-    # --- assistant chats -------------------------------------------------------------
-
-    @app.get("/api/chats")
-    def list_chats():
-        return {"chats": chats.list()}
-
-    @app.get("/api/chats/{chat_id}")
-    def get_chat(chat_id: str):
-        return chats.get(chat_id)
-
-    @app.put("/api/chats/{chat_id}")
-    def put_chat(chat_id: str, body: ChatSaveBody):
-        return chats.put(chat_id, body.title or "Chat", body.messages, count=len(body.messages))
-
-    @app.delete("/api/chats/{chat_id}")
-    def delete_chat(chat_id: str):
-        chats.delete(chat_id)
-        return {"chats": chats.list()}
 
     @app.put("/api/config")
     def put_config(patch: dict):
@@ -448,31 +406,10 @@ def create_app(
         controller.stop()
         return {"ok": True}
 
-    # --- assistant -----------------------------------------------------------
-
-    @app.post("/api/ai/chat")
-    async def ai_chat(body: ChatBody):
-        return await llm.chat(
-            store.settings.llm,
-            machine(),
-            body.messages,
-            body.context,
-            body.image,
-            completion=app.state.completion,
-            library=library.as_prompt(),
-            reference=body.reference,
-        )
-
-    @app.post("/api/ai/test")
-    async def ai_test():
-        reply = await llm.test_connection(store.settings.llm, completion=app.state.completion)
-        return {"ok": True, "reply": reply}
-
     # --- bug reports -----------------------------------------------------------
 
     def secrets() -> tuple[str, ...]:
         return (
-            store.settings.llm.api_key,
             store.settings.bugs.token,
             os.environ.get("GITHUB_TOKEN", ""),
             os.environ.get("GH_TOKEN", ""),
@@ -487,17 +424,10 @@ def create_app(
     @app.post("/api/bug/preview")
     def bug_preview(draft: bugs.BugDraft):
         """Compose the report. Nothing is sent: the person reviews this text first."""
-        settings = store.settings
         env = {
             "app": bugs.app_info(),
             "status": controller.snapshot(),
             "machine": machine().model_dump(),
-            "llm": {
-                "model": settings.llm.model,
-                "key_set": bool(settings.llm.api_key),
-                "api_base": settings.llm.api_base,
-                "vision": settings.llm.vision,
-            },
             "console": [
                 f"{time.strftime('%H:%M:%S', time.localtime(e.get('t', 0)))} {'> ' if e.get('kind') == 'tx' else ''}{e.get('text', '')}"
                 + (" [error]" if e.get("kind") == "error" else "")

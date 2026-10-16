@@ -137,7 +137,7 @@ NEVER = [
 
 
 def as_prompt_table() -> str:
-    """Compact text version of the table for the assistant's system prompt."""
+    """Compact text version of the table for MCP clients."""
     rows = []
     for mat in MATERIALS:
         parts = [mat["name"] + ":"]
