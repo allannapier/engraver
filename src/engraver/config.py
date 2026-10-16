@@ -11,15 +11,40 @@ import os
 import threading
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from .bugs import BugSettings
 from .gcode import MachineProfile
 
 
+class CameraPoint(BaseModel):
+    """One calibration point: where it is in the camera picture and on the bed."""
+
+    u: float = Field(ge=0, le=1)  # fraction of the picture's width, from the left
+    v: float = Field(ge=0, le=1)  # fraction of the picture's height, from the top
+    x: float = Field(ge=-2000, le=2000)  # mm from the bed's front-left corner, to the right
+    y: float = Field(ge=-2000, le=2000)  # mm from the front, away
+
+
+class CameraSettings(BaseModel):
+    """A webcam looking down at the bed. The device id is the browser's, so it's only meaningful there."""
+
+    device_id: str = Field(default="", max_length=300)
+    label: str = Field(default="", max_length=200)
+    points: list[CameraPoint] = []
+
+    @field_validator("points")
+    @classmethod
+    def _four_or_none(cls, points: list[CameraPoint]) -> list[CameraPoint]:
+        if points and len(points) != 4:
+            raise ValueError("calibration needs exactly four points")
+        return points
+
+
 class Settings(BaseModel):
     machine: MachineProfile = MachineProfile()
     bugs: BugSettings = BugSettings()
+    camera: CameraSettings = CameraSettings()
 
 
 def default_path() -> Path:
@@ -82,5 +107,6 @@ class ConfigStore:
         if "repo" in bugs_patch:
             bugs_patch["repo"] = str(bugs_patch["repo"]).strip().removeprefix("https://github.com/").strip("/")
         bugs = {**current["bugs"], **bugs_patch}
-        self.settings = Settings.model_validate({"machine": machine, "bugs": bugs})
+        camera = {**current["camera"], **(patch.get("camera") or {})}
+        self.settings = Settings.model_validate({"machine": machine, "bugs": bugs, "camera": camera})
         self.save()

@@ -47,6 +47,7 @@ const ICONS = {
   left: "M19 12H5m0 0 6-6m-6 6 6 6",
   right: "M5 12h14m0 0-6-6m6 6-6 6",
   close: "M6 6l12 12M18 6 6 18",
+  camera: "M4 8h3l2-3h6l2 3h3v11H4zM12 10.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7z",
 };
 
 export function icon(name) {

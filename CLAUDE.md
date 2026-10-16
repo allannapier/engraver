@@ -33,4 +33,5 @@ Local browser app that drives a GRBL diode laser (Atomstack A10). Python/FastAPI
 - Speeds are mm/min, power is percent.
 - An object is SVG markup plus a viewBox, scaled into `x, y, w, h` and rotated about its centre. Geometry is never rewritten; tracing reads the live DOM.
 - Change the simulator alongside the controller: tests rely on it behaving like GRBL 1.1 (128-byte RX buffer, 16-block planner, sync on `$` and `G10`).
+- The camera is the browser's (`static/js/camera.js`), not the server's: the server only stores the calibration (`config.CameraSettings`, four `{u, v, x, y}` points, u/v as fractions of the picture, x/y in machine mm). Photos are never saved or put in bug reports. `get_bed_photo` is read-only: it may turn the camera on, nothing else.
 - UI copy: plain verbs, sentence case, errors say what happened and what to do.

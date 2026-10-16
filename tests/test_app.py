@@ -77,6 +77,28 @@ def test_an_old_assistant_key_is_removed_from_disk(tmp_path):
     assert "llm" not in saved and "sk-old-key" not in path.read_text() and saved["machine"]["bed_w"] == 410
 
 
+def test_camera_settings(client):
+    points = [
+        {"u": 0.1, "v": 0.1, "x": 40, "y": 360},
+        {"u": 0.9, "v": 0.1, "x": 370, "y": 360},
+        {"u": 0.9, "v": 0.9, "x": 370, "y": 40},
+        {"u": 0.1, "v": 0.9, "x": 40, "y": 40},
+    ]
+    r = client.put("/api/config", json={"camera": {"device_id": "abc", "label": "Webcam", "points": points}})
+    cam = r.json()["config"]["camera"]
+    assert cam["device_id"] == "abc" and len(cam["points"]) == 4
+    # Other settings leave the camera alone; clearing the points keeps the camera.
+    client.put("/api/config", json={"machine": {"bed_w": 420}})
+    assert client.get("/api/state").json()["config"]["camera"]["label"] == "Webcam"
+    client.put("/api/config", json={"camera": {"points": []}})
+    cam = client.get("/api/state").json()["config"]["camera"]
+    assert cam["points"] == [] and cam["device_id"] == "abc"
+    # Calibration is four points inside the picture, or nothing.
+    assert client.put("/api/config", json={"camera": {"points": points[:3]}}).status_code == 422
+    bad = [dict(points[0], u=1.5), *points[1:]]
+    assert client.put("/api/config", json={"camera": {"points": bad}}).status_code == 422
+
+
 def test_machine_actions_need_a_connection(client):
     r = client.post("/api/jog", json={"dx": 10})
     assert r.status_code == 409 and "Not connected" in r.json()["detail"]

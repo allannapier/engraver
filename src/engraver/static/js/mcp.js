@@ -6,10 +6,11 @@
 // the same way, and each call is one undo step. Starting a job only opens the usual
 // confirmation: nothing burns until the person clicks Start burning.
 
-import { state, commit, select, objectById, layerById } from "./store.js";
+import { state, bed, commit, select, objectById, layerById } from "./store.js";
 import { post } from "./api.js";
 import { toast } from "./ui.js";
-import { snapshotPng } from "./stage.js";
+import { snapshotPng, renderBed } from "./stage.js";
+import { isCalibrated, grabFrame, correctFrame, cameraSettings, photographBed } from "./camera.js";
 import { buildJob } from "./job.js";
 import { confirmAndStart, frame, machineReady } from "./run.js";
 import { context, applyAction } from "./canvasedit.js";
@@ -32,7 +33,46 @@ async function edit(args) {
   return { text, ...(design ? { design_id: design.id } : {}), ...(layer ? { layer_id: layer.id } : {}) };
 }
 
+/** The part of the bed to show, from machine coordinates, as canvas mm (y down). Null for the whole bed. */
+function photoArea({ x_mm, y_mm, width_mm, height_mm }) {
+  if ([x_mm, y_mm, width_mm, height_mm].every((v) => v === undefined || v === null)) return null;
+  const b = bed();
+  const x0 = Math.max(0, Number(x_mm) || 0), y0 = Math.max(0, Number(y_mm) || 0);
+  const x1 = Math.min(b.w, width_mm > 0 ? x0 + Number(width_mm) : b.w);
+  const y1 = Math.min(b.h, height_mm > 0 ? y0 + Number(height_mm) : b.h);
+  if (x1 - x0 < 5 || y1 - y0 < 5) throw new Error(`That area is off the bed or smaller than 5 mm. The bed is ${b.w} × ${b.h} mm.`);
+  return { x: x0, y: b.h - y1, w: x1 - x0, h: y1 - y0, machine: [x0, y0, x1 - x0, y1 - y0] };
+}
+
+async function bedPhoto({ designs = true, ...args }) {
+  if (!isCalibrated()) {
+    throw new Error("Engraver has no calibrated camera. Ask the person to plug in a webcam over the bed and calibrate it: Setup tab, Camera.");
+  }
+  const area = photoArea(args);
+  const maxSide = 1024;
+  const frame = await grabFrame();
+  // The whole-bed photo also goes on the canvas, so the person sees what the client saw.
+  const whole = await photographBed({ frame });
+  let background = { url: whole.url };
+  if (area) {
+    const pxPerMm = Math.min(8, maxSide / Math.max(area.w, area.h));
+    const crop = correctFrame(frame, cameraSettings().points, { area, pxPerMm });
+    background = { url: crop.toDataURL("image/jpeg", 0.9), x: area.x, y: area.y, w: area.w, h: area.h };
+  }
+  const image = await renderBed({ maxSide, area, background, designs: designs !== false, grid: true, type: "image/jpeg" });
+  if (!image) throw new Error("Couldn't draw the photo.");
+  const where = area ? `x ${area.machine[0]} to ${area.machine[0] + area.machine[2]}, y ${area.machine[1]} to ${area.machine[1] + area.machine[3]} mm` : `the whole ${bed().w} × ${bed().h} mm bed`;
+  const about = [
+    `Photo of ${where}, taken just now and corrected to line up with the canvas.`,
+    "Yellow grid lines are labelled in mm from the bed's front-left corner (x to the right, y away from the front), the same coordinates the design tools use. Dark grey is outside the camera's view.",
+    designs !== false ? "Designs are drawn over the photo: engravings see-through, cut and score lines in red." : "Designs aren't drawn.",
+    "The laser head hides whatever is under it: if it's in the way, jog it to a corner and look again.",
+  ].join(" ");
+  return { image, about, text: "Took a photo of the bed." };
+}
+
 const actions = {
+  bed_photo: bedPhoto,
   context: async () => context(),
   snapshot: async () => {
     const image = await snapshotPng(1024);
@@ -87,7 +127,7 @@ const actions = {
   },
 };
 
-const NOTED = new Set(["edit", "delete_design", "save_design", "open_saved_design", "new_design", "frame_job"]);
+const NOTED = new Set(["bed_photo", "edit", "delete_design", "save_design", "open_saved_design", "new_design", "frame_job"]);
 
 export async function handleMcp({ id, action, args = {} }) {
   let reply;

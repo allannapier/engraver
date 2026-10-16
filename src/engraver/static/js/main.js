@@ -15,6 +15,7 @@ import { initSetup } from "./setup.js";
 import { initBugReport } from "./bugreport.js";
 import { initDesigns, cleanProject, saveDesign } from "./designs.js";
 import { handleMcp } from "./mcp.js";
+import { initBedPhoto, takePhoto } from "./bedphoto.js";
 
 installDiagnostics(); // before anything else runs, so start-up errors are caught too
 
@@ -155,6 +156,7 @@ const TOOLS = {
   "zoom-in": () => zoomBy(1.3),
   "zoom-out": () => zoomBy(1 / 1.3),
   fit: fitView,
+  camera: takePhoto,
 };
 
 function initTools() {
@@ -505,6 +507,7 @@ async function boot() {
   initLaser();
   initSetup();
   initBugReport();
+  initBedPhoto();
   emit("config");
   emit("status");
   refreshPorts().catch(() => {});

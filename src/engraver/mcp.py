@@ -54,6 +54,8 @@ SVG: a complete standalone <svg> with xmlns and a viewBox (units are arbitrary; 
 
 Settings: call list_materials. The person's own materials beat the generic starting points, and a setting picked from a burned test is known to work on this machine. Never set more than 90 % power; if a job doesn't cut or mark deeply enough, slow down first, then add a pass, then raise power in steps of about 10 % up to 90 %. Keep engraving at or below 60 % unless a tested setting says otherwise. Don't give settings for materials on the never-laser list. When a setting is a guess, say so and suggest the app's test grid (Design tab, Material, Test grid).
 
+Camera: if the person has a webcam over the bed, get_bed_photo shows the real bed with a mm grid in these coordinates. Look before placing a design on material, size and place it to fit what's there, and look again after framing or burning. Without a camera, ask the person where the material is and how big.
+
 Machine: you can connect, jog, set the origin, frame and pause or stop. You cannot start a job: request_job_start opens a confirmation in the app, and the person clicks Start burning. Every change shows in the app and can be undone there."""
 
 
@@ -251,6 +253,34 @@ TOOLS: list[dict] = [
         "name": "get_canvas_image",
         "description": "A picture of the bed with every design on it, to check how the work looks. Line layers show as red outlines.",
         "inputSchema": NO_ARGS,
+        "annotations": READ_ONLY,
+    },
+    {
+        "name": "get_bed_photo",
+        "description": (
+            "A fresh photo of the bed from the person's webcam, corrected to line up with the canvas, with a mm grid "
+            "in the same coordinates as the design tools. Designs are drawn over it unless designs is false. Use it to "
+            "see the material: where it is, its size and shape, grain, knots and anything already burned. Give "
+            "x_mm, y_mm, width_mm and height_mm to zoom into part of the bed. Needs a camera set up in the app."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "designs": {"type": "boolean", "description": "Draw the canvas designs over the photo. Default true."},
+                "x_mm": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "Left edge of the area, mm from the bed's left.",
+                },
+                "y_mm": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "Front edge of the area, mm from the bed's front.",
+                },
+                "width_mm": {"type": "number", "exclusiveMinimum": 0},
+                "height_mm": {"type": "number", "exclusiveMinimum": 0},
+            },
+        },
         "annotations": READ_ONLY,
     },
     {
@@ -478,6 +508,16 @@ class Server:
             if not url.startswith(prefix):
                 raise ToolError("The page couldn't draw the canvas as a picture.")
             return [{"type": "image", "data": url[len(prefix) :], "mimeType": "image/png"}]
+        if name == "get_bed_photo":
+            shot = await self.bridge.call("bed_photo", {"client": self.client, **args})
+            url = shot.get("image") or ""
+            prefix = "data:image/jpeg;base64,"
+            if not url.startswith(prefix):
+                raise ToolError("The page couldn't make the photo.")
+            return [
+                {"type": "image", "data": url[len(prefix) :], "mimeType": "image/jpeg"},
+                *text(shot.get("about", "")),
+            ]
         # Everything else changes the canvas or starts something in the page.
         args = dict(args, type=name) if name in DESIGN_ACTIONS else dict(args)
         reply = await self.bridge.call(name if name not in DESIGN_ACTIONS else "edit", {"client": self.client, **args})

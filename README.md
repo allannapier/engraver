@@ -89,6 +89,19 @@ How it files, in order of preference:
 
 The repository defaults to `allannapier/engraver` and can be changed in Setup. That repository is public, so reports are too. Set `ENGRAVER_BUG_DRY_RUN=1` to try the form without creating anything.
 
+## Camera
+
+A USB webcam above the bed puts a photo of the bed on the canvas, so you can place designs on the material you've actually got, and lets MCP clients such as Claude Code see it too.
+
+1. Mount the camera looking down at the whole bed and plug it in.
+2. In **Setup → Camera**, pick it and use **Show preview** to check the view (the browser asks once for permission).
+3. **Put marks on the canvas** adds four crosses on their own layer. Burn them on a sheet covering the bed, or draw crosses by hand at spots you've measured.
+4. **Calibrate** takes a picture: click the centre of each mark in order (back left, back right, front right, front left) and check their X and Y. Save, and the corrected bed photo appears on the canvas. Check the grid lines up with the marks.
+
+The camera button beside the canvas takes a new photo. The bar above the canvas says how old it is and retakes or hides it. Move the head out of the way first: it hides what's under it. The camera turns off after a minute and a half without a photo.
+
+Calibration corrects perspective, not lens distortion, so a wide-angle lens is a few mm out near the edges. Calibrate again if the camera moves.
+
 ## Machine notes
 
 - The A10 speaks GRBL at 115200 baud. On connect the app reads the controller's `$$` settings: the full-power value (`$30`) and top speed (`$110`) come from the machine, and Setup offers the reported travel as the bed size.
@@ -116,6 +129,7 @@ Try, for example: "a 90 mm coaster with a mountain line drawing, engraved, with 
 A client can:
 
 - read the canvas, its layers and the machine's status, and get a picture of the bed
+- with a calibrated camera, get a fresh photo of the bed (all of it, or part zoomed in) with a mm grid and the designs drawn over it (**get_bed_photo**)
 - add, change, move and delete designs and layers and read your materials
 - save, open and start new designs
 - connect, jog, set or go to the origin, frame the job, and pause or stop a job
@@ -146,9 +160,10 @@ src/engraver/
   mcp.py            MCP server: tools for Claude Code and others, relayed to the open page
   config.py         saved settings
   static/           the browser app (plain ES modules, no build step); js/canvasedit.js applies MCP canvas edits
+    js/camera.js    webcam capture, calibration maths, corrected bed photo
 ```
 
-The browser does the geometry: line layers are traced from the live SVG into polylines, fill layers are rendered to a bitmap at the layer's line gap. The server turns those into G-code and streams it with GRBL's character-counting protocol.
+The browser does the geometry: line layers are traced from the live SVG into polylines, fill layers are rendered to a bitmap at the layer's line gap. The server turns those into G-code and streams it with GRBL's character-counting protocol. The camera is the browser's too: it captures the picture and corrects it to the bed; the server only keeps the calibration.
 
 ## Tests
 
@@ -166,6 +181,8 @@ Browser test (needs Node):
 ENGRAVER_SIM_SPEED=20 ENGRAVER_BUG_DRY_RUN=1 ENGRAVER_CONFIG=/tmp/engraver-e2e.json uv run engraver --no-browser &
 node tests/e2e/smoke.mjs
 ```
+
+The browser test runs Chromium with a fake camera that plays a made-up picture of the bed (`tests/e2e/fakecamera.mjs`), calibrates it by clicking the marks, and checks the corrected photo against where the board really is.
 
 CI (`.github/workflows/ci.yml`) runs all of this on every pull request and on `main`: lint and format, the unit tests on Python 3.11 to 3.14, the browser test against the simulator, and a wheel build that checks the frontend is packaged.
 

@@ -6,6 +6,8 @@ import { el, scopeIds } from "./svgutil.js";
 
 const stage = document.getElementById("stage");
 const bedLayer = el("g", {}, stage);
+const photoNode = el("image", { class: "bed-photo", x: 0, y: 0, preserveAspectRatio: "none" });
+let photo = null; // { url, at } shown on the bed, or null
 const objectLayer = el("g", {}, stage);
 const overlay = el("g", {}, stage);
 const nodes = new Map(); // object id -> { g, art, hit, svg }
@@ -86,6 +88,10 @@ function drawBed() {
   const b = bed();
   bedLayer.innerHTML = "";
   el("rect", { class: "bed", x: 0, y: 0, width: b.w, height: b.h }, bedLayer);
+  photoNode.setAttribute("width", b.w);
+  photoNode.setAttribute("height", b.h);
+  bedLayer.append(photoNode);
+  drawPhoto();
   let minor = "", major = "";
   // Grid is measured from the front-left corner, the machine's origin.
   for (let x = 0; x <= b.w + 0.001; x += 10) {
@@ -105,6 +111,20 @@ function drawBed() {
     el("text", { class: "ruler", x: 0, y: b.h - y, dx: "-0.6em", dy: "0.35em", "text-anchor": "end" }, bedLayer).textContent = y;
   }
 }
+
+function drawPhoto() {
+  if (photo) photoNode.setAttribute("href", photo.url);
+  else photoNode.removeAttribute("href");
+  photoNode.style.display = photo ? "" : "none";
+  stage.classList.toggle("has-photo", !!photo);
+}
+
+/** Show a camera photo of the bed (a data URL covering the whole bed) under the grid, or null to hide it. */
+export function showPhoto(next) {
+  photo = next && next.url ? next : null;
+  drawPhoto();
+}
+export const shownPhoto = () => photo;
 
 // --- objects -------------------------------------------------------------------
 
@@ -365,19 +385,66 @@ export function onDoubleClick(fn) {
   });
 }
 
-/** A PNG of the bed and the designs on it, for an MCP client to look at. */
 /** The canvas as a picture. `area` ({x, y, w, h} in mm) crops it, e.g. to the designs for a thumbnail. */
-export async function snapshotPng(maxSide = 1024, area = null) {
+export function snapshotPng(maxSide = 1024, area = null) {
+  return renderBed({ maxSide, area, type: area ? "image/jpeg" : "image/png" });
+}
+
+const ARTWORK = "path,rect,circle,ellipse,line,polyline,polygon";
+
+/** Grid lines every `step` mm and labels every `label` mm, in machine coordinates, over the given canvas area. */
+function gridMarkup(b, box, scale) {
+  const span = Math.max(box.w, box.h);
+  const step = span > 150 ? 10 : span > 40 ? 5 : 1;
+  const label = span > 150 ? 50 : span > 40 ? 10 : 5;
+  const px = 1 / scale; // one output pixel in mm
+  const font = 11 * px;
+  let minor = "", major = "", labels = "";
+  const x0 = Math.ceil(box.x / step) * step, x1 = box.x + box.w;
+  for (let x = x0; x <= x1 + 1e-6; x += step) {
+    const line = `M${x} ${box.y}V${box.y + box.h}`;
+    if (Math.round(x) % label === 0) {
+      major += line;
+      labels += `<text x="${x + 2 * px}" y="${box.y + box.h - 3 * px}">${+x.toFixed(1)}</text>`;
+    } else minor += line;
+  }
+  // Machine y runs away from the front: canvas y = bed depth - machine y.
+  const my0 = Math.ceil((b.h - box.y - box.h) / step) * step, my1 = b.h - box.y;
+  for (let my = my0; my <= my1 + 1e-6; my += step) {
+    const y = b.h - my;
+    const line = `M${box.x} ${y}H${box.x + box.w}`;
+    if (Math.round(my) % label === 0) {
+      major += line;
+      if (my > b.h - box.y - box.h + 8 * px) labels += `<text x="${box.x + 2 * px}" y="${y - 2 * px}">${+my.toFixed(1)}</text>`;
+    } else minor += line;
+  }
+  return `<g fill="none" stroke-width="${px}"><path d="${minor}" stroke="#fff" stroke-opacity=".22"/><path d="${major}" stroke="#ffd34d" stroke-opacity=".7"/></g>`
+    + `<g font-family="sans-serif" font-size="${font}" fill="#ffd34d" stroke="#000" stroke-width="${2.5 * px}" paint-order="stroke" stroke-linejoin="round">${labels}</g>`;
+}
+
+/**
+ * Draw the bed as a picture. `area` is in canvas mm and crops it; `background` is a photo
+ * ({ url, x, y, w, h } in canvas mm, else white); `designs` draws what's on the canvas over it, see
+ * through when there's a photo; `grid` adds millimetre lines and labels in machine coordinates.
+ */
+export async function renderBed({ maxSide = 1024, area = null, background = null, designs = true, grid = false, type = "image/png" } = {}) {
   const bb = bed();
-  const b = area ? { w: area.w, h: area.h } : bb;
-  const vx = area ? area.x : 0, vy = area ? area.y : 0;
-  const clone = objectLayer.cloneNode(true);
-  for (const node of clone.querySelectorAll(".hit")) node.remove();
-  const markup = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vx} ${vy} ${b.w} ${b.h}"><style>.mode-line .art :is(path,rect,circle,ellipse,line,polyline,polygon){fill:none!important;stroke:#c22!important;stroke-width:1.5px!important;vector-effect:non-scaling-stroke}</style><rect x="${vx}" y="${vy}" width="${b.w}" height="${b.h}" fill="#fff"/>${new XMLSerializer().serializeToString(clone)}</svg>`;
-  const scale = maxSide / Math.max(b.w, b.h);
+  const box = area || { x: 0, y: 0, w: bb.w, h: bb.h };
+  const scale = maxSide / Math.max(box.w, box.h);
+  let art = "";
+  if (designs) {
+    const clone = objectLayer.cloneNode(true);
+    for (const node of clone.querySelectorAll(".hit")) node.remove();
+    art = new XMLSerializer().serializeToString(clone);
+  }
+  const see = background ? `.mode-fill .art{opacity:.6}` : "";
+  const ground = background
+    ? `<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" fill="#303030"/><image href="${background.url}" x="${background.x ?? 0}" y="${background.y ?? 0}" width="${background.w ?? bb.w}" height="${background.h ?? bb.h}" preserveAspectRatio="none"/>`
+    : `<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" fill="#fff"/>`;
+  const markup = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box.x} ${box.y} ${box.w} ${box.h}"><style>.mode-line .art :is(${ARTWORK}){fill:none!important;stroke:#e22!important;stroke-width:1.5px!important;vector-effect:non-scaling-stroke}${see}</style>${ground}${grid ? gridMarkup(bb, box, scale) : ""}${art}</svg>`;
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(b.w * scale));
-  canvas.height = Math.max(1, Math.round(b.h * scale));
+  canvas.width = Math.max(1, Math.round(box.w * scale));
+  canvas.height = Math.max(1, Math.round(box.h * scale));
   const url = URL.createObjectURL(new Blob([markup], { type: "image/svg+xml" }));
   try {
     const img = new Image();
@@ -387,7 +454,7 @@ export async function snapshotPng(maxSide = 1024, area = null) {
       img.src = url;
     });
     canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL(area ? "image/jpeg" : "image/png", 0.85);
+    return canvas.toDataURL(type, 0.85);
   } catch {
     return null;
   } finally {

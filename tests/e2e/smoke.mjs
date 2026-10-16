@@ -6,13 +6,22 @@
 // Pass a directory as the first argument to also save screenshots there.
 
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { writeFakeCamera, pictureOf, MARKS, WIDTH } from "./fakecamera.mjs";
 
 const { chromium } = await import(process.env.PLAYWRIGHT_PATH || "playwright");
 const BASE = process.env.ENGRAVER_URL || "http://127.0.0.1:8642";
 const shots = process.argv[2];
 
-const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+// Chromium's fake camera plays a made-up picture of the bed (see fakecamera.mjs).
+const cameraFile = join(mkdtempSync(join(tmpdir(), "engraver-cam-")), "bed.y4m");
+writeFakeCamera(cameraFile);
+const browser = await chromium.launch({
+  args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", `--use-file-for-fake-video-capture=${cameraFile}`],
+});
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, permissions: ["camera"] });
 const errors = [];
 const fail = (text) => {
   errors.push(text);
@@ -123,7 +132,7 @@ await paste(`<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm
 </svg>`);
 await page.waitForFunction(() => document.querySelectorAll(".obj").length === 2);
 assert.equal(await page.evaluate(() => window.__pwned), undefined);
-assert.equal(await page.evaluate(() => document.querySelectorAll("#stage script, #stage foreignObject, #stage style, #stage [onclick], #stage image").length), 0);
+assert.equal(await page.evaluate(() => document.querySelectorAll("#stage script, #stage foreignObject, #stage style, #stage [onclick], #stage image:not(.bed-photo)").length), 0);
 const circle = await store((s) => ({ ...s.state.doc.objects[1] }));
 near(circle.w, 40, 0.01); // 100 mm page, r=20 circle: cropped to 40 mm
 near(circle.h, 40, 0.01);
@@ -648,6 +657,63 @@ r = await tool("get_state");
 const others = r.data.canvas.designs.filter((d) => d.kind === "svg" && d.id !== r.data.canvas.selected?.id);
 assert.ok(others.length >= 1 && others.every((d) => d.svg?.startsWith("<svg")), "every design's SVG goes to the client");
 assert.ok(r.data.canvas.selected.svg.startsWith("<svg"), "the selected design's SVG goes along too");
+
+step("the webcam is calibrated against four marks, shows the bed on the canvas, and an MCP client can see it");
+r = await mcp("tools/call", { name: "get_bed_photo", arguments: {} });
+assert.ok(r.isError && /no calibrated camera/.test(r.content[0].text), "no camera yet: the client is told how to set one up");
+await page.click('.tabs button[data-tab="setup"]');
+await page.click("#camera-section button:has-text('Put marks on the canvas')");
+assert.equal(await store((s) => s.state.doc.layers.some((l) => l.name === "Calibration marks")), true);
+await page.keyboard.press("Control+z");
+await page.click("#camera-section button:has-text('Calibrate')");
+await page.waitForSelector("dialog[open] .calib canvas");
+const picture = page.locator("dialog .calib canvas");
+await page.waitForFunction(() => document.querySelector("dialog .calib canvas").width > 0);
+const pictureBox = await picture.boundingBox();
+const scale = pictureBox.width / WIDTH;
+for (const [x, y] of MARKS) {
+  const [u, v] = pictureOf(x, y);
+  await picture.click({ position: { x: u * scale, y: v * scale } });
+}
+await shot("20-calibrate");
+await page.click('dialog button[value="save"]');
+await page.waitForSelector("dialog[open]", { state: "detached", timeout: 1000 }).catch(() => {});
+await page.waitForSelector("#photo-bar:not([hidden])", { timeout: 15000 });
+const points = await store((s) => s.state.config.camera.points);
+assert.equal(points.length, 4);
+assert.deepEqual(points.map((q) => [q.x, q.y]), MARKS);
+await shot("21-bed-photo");
+
+// Colour at a bed position (machine mm) in a returned JPEG covering `area` ([x, y, w, h], machine mm).
+const colourAt = (image, area, x, y) => page.evaluate(async ([data, [ax, ay, aw, ah], px, py]) => {
+  const img = new Image();
+  img.src = `data:image/jpeg;base64,${data}`;
+  await img.decode();
+  const c = Object.assign(document.createElement("canvas"), { width: img.width, height: img.height });
+  const ctx = c.getContext("2d");
+  ctx.drawImage(img, 0, 0);
+  const i = Math.round(((px - ax) / aw) * img.width), j = Math.round(((ay + ah - py) / ah) * img.height);
+  return [...ctx.getImageData(i, j, 1, 1).data.slice(0, 3)];
+}, [image, area, x, y]);
+const wood = ([red, green, blue]) => red - blue > 50 && red < 200;
+const ply = ([red, green, blue]) => red > 190 && green > 180 && blue > 150;
+
+r = await tool("get_bed_photo", { designs: false });
+assert.equal(r.error, false, r.text);
+const whole = [0, 0, 410, 400];
+assert.ok(wood(await colourAt(r.image, whole, 183, 173)), "the board shows where it is on the bed");
+assert.ok(ply(await colourAt(r.image, whole, 323, 303)), "bare bed elsewhere");
+assert.ok(ply(await colourAt(r.image, whole, 96, 173)) && wood(await colourAt(r.image, whole, 104, 173)), "the board's edge lines up within a few mm");
+r = await tool("get_bed_photo", { x_mm: 90, y_mm: 110, width_mm: 180, height_mm: 120 });
+assert.equal(r.error, false, r.text);
+if (shots) writeFileSync(`${shots}/22-mcp-zoom.jpg`, Buffer.from(r.image, "base64"));
+assert.ok(wood(await colourAt(r.image, [90, 110, 180, 120], 247, 213)), "zoomed photo of part of the bed");
+assert.ok(ply(await colourAt(r.image, [90, 110, 180, 120], 264, 213)));
+await page.locator(".toast", { hasText: "Claude Code: Took a photo of the bed" }).first().waitFor();
+await page.click("#photo-hide");
+assert.equal(await page.isHidden("#photo-bar"), true);
+await page.click('[data-tool="camera"]');
+await page.waitForSelector("#photo-bar:not([hidden])");
 
 await page.click("#connect");
 await waitStatus((s) => !s.connected);

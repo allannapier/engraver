@@ -48,6 +48,8 @@
       <button data-tool="zoom-in" title="Zoom in"></button>
       <button data-tool="zoom-out" title="Zoom out"></button>
       <button data-tool="fit" title="Show the whole bed"></button>
+      <hr>
+      <button data-tool="camera" title="Take a photo of the bed"></button>
     </nav>
 
     <section class="stage-wrap">
@@ -67,6 +69,11 @@
       </div>
       <svg id="stage" xmlns="http://www.w3.org/2000/svg" tabindex="0" aria-label="Laser bed canvas"></svg>
       <div class="dropzone" id="dropzone" hidden>Drop to add to the bed</div>
+      <div class="photo-bar" id="photo-bar" hidden>
+        <span id="photo-age"></span>
+        <button id="photo-retake" class="btn small ghost">Retake</button>
+        <button id="photo-hide" class="btn small ghost">Hide</button>
+      </div>
     </section>
 
     <aside class="side">

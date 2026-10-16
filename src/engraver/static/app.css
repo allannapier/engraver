@@ -297,3 +297,21 @@ dialog ul { margin: 0; padding-left: 18px; color: var(--warn); font-size: 13px; 
 dialog .actions.spread { flex-wrap: wrap; justify-content: flex-start; }
 dialog .actions.spread > :last-child { margin-left: auto; }
 
+/* Camera photo of the bed, under the grid. */
+.bed-photo { opacity: 0.9; }
+#stage.has-photo .grid-minor { stroke: rgba(255, 255, 255, 0.18); }
+#stage.has-photo .grid-major { stroke: rgba(255, 255, 255, 0.4); }
+.photo-bar { position: absolute; right: 12px; top: 54px; display: flex; gap: 6px; align-items: center; padding: 4px 6px 4px 10px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); font-size: 12px; color: var(--muted); z-index: 2; }
+.photo-bar[hidden] { display: none; }
+.camera-preview { position: relative; width: 100%; background: #111; border-radius: 6px; overflow: hidden; }
+.camera-preview video, .camera-preview canvas { display: block; width: 100%; height: auto; }
+.calib { position: relative; justify-self: center; width: fit-content; max-width: 100%; cursor: crosshair; user-select: none; line-height: 0; }
+.calib canvas { display: block; max-width: min(860px, 80vw); max-height: 60vh; height: auto; }
+.calib svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.calib .pt { fill: none; stroke: #ffd34d; stroke-width: 2; }
+.calib .pt-label { fill: #ffd34d; stroke: #000; stroke-width: 3px; paint-order: stroke; font: 600 13px sans-serif; }
+.calib .pt.next { stroke: #5b8cff; stroke-dasharray: 4 3; }
+.calib-points { display: grid; grid-template-columns: auto 1fr 1fr auto; gap: 6px 8px; align-items: center; font-size: 13px; }
+.calib-points input { width: 100%; }
+.calib-points .done { color: var(--ok); }
+dialog.wide:has(.calib) { width: min(980px, calc(100vw - 32px)); }
