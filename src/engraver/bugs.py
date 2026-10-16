@@ -50,7 +50,6 @@ class Include(BaseModel):
     details: bool = True  # machine state, last job, materials
     logs: bool = True  # console, server and browser logs, recent clicks
     design: bool = True  # layers and designs on the canvas, without pictures
-    chat: bool = False  # recent assistant conversation
 
 
 class ClientInfo(BaseModel):
@@ -63,7 +62,6 @@ class ClientInfo(BaseModel):
     actions: list[str] = Field(default=[], max_length=80)
     project: dict | None = None
     ui: dict = {}
-    chat: list[dict] = Field(default=[], max_length=12)
 
 
 class BugDraft(BaseModel):
@@ -223,11 +221,6 @@ def compose(draft: BugDraft, env: dict, secrets: tuple[str, ...] = ()) -> str:
             laser += f", alarm: {status['alarm']}"
     else:
         laser = "not connected"
-    llm = env.get("llm", {})
-    model = (
-        f"{llm['model']} (key {'saved' if llm.get('key_set') else 'not saved'})" if llm.get("model") else "not set up"
-    )
-
     parts = [f"## What happened\n\n{draft.description.strip()}"]
     if draft.expected.strip():
         parts.append(f"## What was expected\n\n{draft.expected.strip()}")
@@ -236,7 +229,6 @@ def compose(draft: BugDraft, env: dict, secrets: tuple[str, ...] = ()) -> str:
         f"- Python {app.get('python', '?')} on {app.get('platform', '?')}",
         f"- Browser: {client.user_agent or 'unknown'}" + (f", window {client.viewport}" if client.viewport else ""),
         f"- Laser: {laser}",
-        f"- Assistant model: {model}",
     ]
     parts.append("## Environment\n\n" + "\n".join(env_lines))
 
@@ -274,13 +266,10 @@ def compose(draft: BugDraft, env: dict, secrets: tuple[str, ...] = ()) -> str:
         project = _trim_project(client.project)
         if project and (project["designs"] or project["layers"]):
             add("Layers and designs on the canvas (pictures left out)", _json(project, 14000), 3, "json")
-    if inc.chat and client.chat:
-        lines = [f"{str(m.get('role', '?')).upper()}: {str(m.get('content', ''))[:1500]}" for m in client.chat[-8:]]
-        add(f"Assistant conversation (last {len(lines)} messages)", "\n\n".join(lines), 4)
 
     footer = (
         "---\nFiled from Engraver's Report a bug form. The details above were collected automatically "
-        "when the report was written; API keys and tokens are removed. See `CLAUDE.md` for how the code is laid out and what must keep working."
+        "when the report was written; tokens are removed. See `CLAUDE.md` for how the code is laid out and what must keep working."
     )
     head = scrub("\n\n".join(parts), secrets)
     budget = MAX_BODY - len(head) - len(footer) - 200

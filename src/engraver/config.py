@@ -1,7 +1,7 @@
-"""Settings saved on this computer: machine profile and assistant provider.
+"""Settings saved on this computer: machine profile and bug report sign-in.
 
-The API key is stored in plain text in a file only the current user can read.
-It is never sent back to the browser.
+The optional GitHub token is stored in plain text in a file only the current
+user can read. It is never sent back to the browser.
 """
 
 from __future__ import annotations
@@ -17,17 +17,8 @@ from .bugs import BugSettings
 from .gcode import MachineProfile
 
 
-class LLMSettings(BaseModel):
-    model: str = ""  # LiteLLM model string, e.g. "anthropic/claude-sonnet-5-5"
-    api_key: str = ""
-    api_base: str = ""
-    vision: bool = True  # send a picture of the canvas with each request
-    max_tokens: int = 8000
-
-
 class Settings(BaseModel):
     machine: MachineProfile = MachineProfile()
-    llm: LLMSettings = LLMSettings()
     bugs: BugSettings = BugSettings()
 
 
@@ -46,12 +37,21 @@ class ConfigStore:
 
     def _load(self) -> Settings:
         try:
-            return Settings.model_validate(json.loads(self.path.read_text()))
+            data = json.loads(self.path.read_text())
+            settings = Settings.model_validate(data)
         except FileNotFoundError:
             return Settings()
         except Exception:
             # A corrupt file shouldn't stop the app from starting.
             return Settings()
+        if isinstance(data, dict) and "llm" in data:
+            # The built-in assistant is gone: rewrite the file so its API key doesn't stay on disk.
+            self.settings = settings
+            try:
+                self.save()
+            except OSError:
+                pass
+        return settings
 
     def save(self) -> None:
         with self._lock:
@@ -66,9 +66,6 @@ class ConfigStore:
 
     def public(self) -> dict:
         data = self.settings.model_dump()
-        key = data["llm"].pop("api_key")
-        data["llm"]["api_key_set"] = bool(key)
-        data["llm"]["api_key_hint"] = f"…{key[-4:]}" if len(key) >= 8 else ""
         token = data["bugs"].pop("token")
         data["bugs"]["token_set"] = bool(token)
         return data
@@ -76,15 +73,6 @@ class ConfigStore:
     def update(self, patch: dict) -> None:
         current = self.settings.model_dump()
         machine = {**current["machine"], **(patch.get("machine") or {})}
-        llm_patch = dict(patch.get("llm") or {})
-        # An empty key means "keep what's saved"; clearing is explicit.
-        if llm_patch.pop("clear_api_key", False):
-            llm_patch["api_key"] = ""
-        elif not llm_patch.get("api_key"):
-            llm_patch.pop("api_key", None)
-        llm_patch.pop("api_key_set", None)
-        llm_patch.pop("api_key_hint", None)
-        llm = {**current["llm"], **llm_patch}
         bugs_patch = dict(patch.get("bugs") or {})
         if bugs_patch.pop("clear_token", False):
             bugs_patch["token"] = ""
@@ -94,5 +82,5 @@ class ConfigStore:
         if "repo" in bugs_patch:
             bugs_patch["repo"] = str(bugs_patch["repo"]).strip().removeprefix("https://github.com/").strip("/")
         bugs = {**current["bugs"], **bugs_patch}
-        self.settings = Settings.model_validate({"machine": machine, "llm": llm, "bugs": bugs})
+        self.settings = Settings.model_validate({"machine": machine, "bugs": bugs})
         self.save()

@@ -25,7 +25,7 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
-from . import __version__, llm
+from . import __version__
 from .bugs import log
 from .materials import NEVER, as_prompt_table
 
@@ -36,17 +36,25 @@ NO_TAB = (
     "Open http://127.0.0.1:8642 (or run `engraver`) and try again."
 )
 
-INSTRUCTIONS = """Engraver drives a diode laser engraver/cutter (Atomstack A10 class: 455 nm, about 10 W). Its canvas is the bed.
+INSTRUCTIONS = """Engraver drives a diode laser engraver/cutter (Atomstack A10 class: 455 nm, about 10 W). Its canvas is the bed. Call get_state first, and get_canvas_image to check how a design looks.
 
 Coordinates: mm from the bed's front-left corner, x to the right, y away from the front. A design's position is the front-left corner of its bounding box.
 
-Layers: every design sits on one layer. "fill" layers engrave (rasterised; dark burns, white and transparent don't; settings speed mm/min, power %, passes, interval mm, image_mode threshold|dither|grayscale). "line" layers trace outlines once each for scoring or cutting (speed, power, passes). Typical project: an engrave layer and a cut layer.
+Layers: every design sits on one layer, and the layer's mode and settings apply to everything on it.
+- "fill" layers engrave: the design is rasterised and scanned line by line; dark burns, white and transparent don't. Settings: speed (mm/min), power (%), passes, interval (mm between scan lines), image_mode (threshold for crisp black and white, dither for photos, grayscale to vary power with darkness).
+- "line" layers trace vector outlines once each, for scoring or cutting. Settings: speed, power, passes.
+A typical project has an engrave layer and a cut layer. Put each design on the layer whose mode suits it.
 
-SVG: a complete standalone <svg> with xmlns and a viewBox, using only svg, g, path, rect, circle, ellipse, line, polyline, polygon and text (fill only). Presentation attributes only: no CSS, classes, gradients, filters, masks, clip paths, images or scripts. Fill designs: solid #000 on transparent, detail bolder than 0.3 mm. Line designs: fill="none" stroke="#000", closed outlines for cut-outs, no duplicate strokes, no text. The app crops each design to its artwork and scales it to width_mm; to make parts on different layers line up, draw them in one viewBox and pass align_with (the partner's design id).
+SVG: a complete standalone <svg> with xmlns and a viewBox (units are arbitrary; the app scales the design to width_mm). Use only svg, g, path, rect, circle, ellipse, line, polyline, polygon and text (fill only), styled with presentation attributes: no CSS, classes, gradients, filters, masks, clip paths, images or scripts.
+- Fill designs: solid #000 on transparent, detail bolder than about 0.3 mm at the final size. Greys only for grayscale or dither layers.
+- Line designs: fill="none" stroke="#000". The laser follows the centre of every stroke once whatever its width, so never stack duplicate lines, close every outline that is cut out, and draw letters as paths (text doesn't trace).
+- Plan before drawing: count every piece and repeat, work out positions as numbers, and place shapes from those numbers. Pieces that are cut out must be connected or deliberately separate.
+- The app crops each design to its artwork and scales it on its own, so separate designs only line up when tied together. For parts on different layers that must match (an engraving on a cut-out piece, a score line inside a cut outline), draw them in one shared viewBox, add or replace the outline first, then add or replace the other part with align_with set to the outline's design id; width_mm, x_mm and y_mm are then ignored. When one part changes, replace the other with align_with too.
+- To change an existing design use replace_design on it rather than adding a new one, and keep what the person didn't ask to change. Ask for the finished size if it matters and wasn't given.
 
-Settings: call list_materials. The person's own materials (picked from burned tests) beat the generic starting points. Never set more than 90 % power; slow down or add passes instead. Don't give settings for materials on the never-laser list. Untested settings: suggest the test grid in the app (Design tab, Material, Test grid).
+Settings: call list_materials. The person's own materials beat the generic starting points, and a setting picked from a burned test is known to work on this machine. Never set more than 90 % power; if a job doesn't cut or mark deeply enough, slow down first, then add a pass, then raise power in steps of about 10 % up to 90 %. Keep engraving at or below 60 % unless a tested setting says otherwise. Don't give settings for materials on the never-laser list. When a setting is a guess, say so and suggest the app's test grid (Design tab, Material, Test grid).
 
-Machine: you can connect, jog, set the origin, frame and pause or stop. You cannot start a job: request_job_start opens a confirmation in the app, and the person clicks Start burning. Every change shows in the app and can be undone there. Call get_state first, and get_canvas_image to check how a design looks."""
+Machine: you can connect, jog, set the origin, frame and pause or stop. You cannot start a job: request_job_start opens a confirmation in the app, and the person clicks Start burning. Every change shows in the app and can be undone there."""
 
 
 class ToolError(Exception):
@@ -96,16 +104,137 @@ MOVES = {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}
 NO_ARGS = {"type": "object", "properties": {}}
 
 
-def _design_tools() -> list[dict]:
-    """The in-app assistant's canvas tools, with the per-change note optional."""
-    tools = []
-    for tool in llm.TOOLS:
-        fn = tool["function"]
-        params = json.loads(json.dumps(fn["parameters"]))
-        params["properties"].pop("note", None)
-        params["required"] = [r for r in params.get("required", []) if r != "note"]
-        tools.append({"name": fn["name"], "description": fn["description"], "inputSchema": params, "annotations": EDIT})
-    return tools
+ALIGN_WITH = {
+    "type": "string",
+    "description": (
+        "Id of a design drawn in the same viewBox coordinates. This design is placed so the shared "
+        "coordinates line up with it; width_mm, x_mm and y_mm are ignored."
+    ),
+}
+IMAGE_MODE = {"type": "string", "enum": ["threshold", "dither", "grayscale"]}
+
+DESIGN_TOOLS: list[dict] = [
+    {
+        "name": "add_design",
+        "description": "Add a new design to the canvas from SVG markup.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Short name shown in the app."},
+                "svg": {"type": "string", "description": "Complete standalone SVG document."},
+                "width_mm": {"type": "number", "description": "Finished width on the material in mm."},
+                "mode": {
+                    "type": "string",
+                    "enum": ["fill", "line"],
+                    "description": "fill = engrave, line = score or cut.",
+                },
+                "layer_id": {
+                    "type": "string",
+                    "description": "Existing layer to put it on. Omit to use the first layer with a matching mode, or a new one.",
+                },
+                "x_mm": {"type": "number", "description": "Left edge, mm from the bed's left. Omit to centre."},
+                "y_mm": {"type": "number", "description": "Front edge, mm from the bed's front. Omit to centre."},
+                "align_with": ALIGN_WITH,
+            },
+            "required": ["name", "svg", "width_mm", "mode"],
+        },
+    },
+    {
+        "name": "replace_design",
+        "description": (
+            "Replace the artwork of an existing design, keeping its centre, width and layer "
+            "(or its placement relative to align_with, if given)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "design_id": {"type": "string"},
+                "svg": {"type": "string", "description": "Complete standalone SVG document."},
+                "name": {"type": "string"},
+                "align_with": ALIGN_WITH,
+            },
+            "required": ["design_id", "svg"],
+        },
+    },
+    {
+        "name": "transform_design",
+        "description": "Move, resize or rotate an existing design. Omitted values stay as they are. Height follows width unless both are given.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "design_id": {"type": "string"},
+                "x_mm": {"type": "number"},
+                "y_mm": {"type": "number"},
+                "width_mm": {"type": "number"},
+                "height_mm": {"type": "number"},
+                "rotation_deg": {"type": "number"},
+                "layer_id": {"type": "string", "description": "Move the design to this layer."},
+            },
+            "required": ["design_id"],
+        },
+    },
+    {
+        "name": "add_layer",
+        "description": "Create a layer with its laser settings.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "mode": {"type": "string", "enum": ["fill", "line"]},
+                "speed": {"type": "number", "description": "mm/min"},
+                "power": {"type": "number", "description": "percent, 0-90"},
+                "passes": {"type": "integer"},
+                "interval": {"type": "number", "description": "fill only: mm between scan lines"},
+                "image_mode": IMAGE_MODE,
+            },
+            "required": ["name", "mode", "speed", "power"],
+        },
+    },
+    {
+        "name": "set_layer",
+        "description": "Change settings on an existing layer. Omitted values stay as they are.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "layer_id": {"type": "string"},
+                "name": {"type": "string"},
+                "mode": {"type": "string", "enum": ["fill", "line"]},
+                "speed": {"type": "number", "description": "mm/min"},
+                "power": {"type": "number", "description": "percent, 0-90"},
+                "passes": {"type": "integer"},
+                "interval": {"type": "number", "description": "fill only: mm between scan lines"},
+                "image_mode": IMAGE_MODE,
+            },
+            "required": ["layer_id"],
+        },
+    },
+]
+for _tool in DESIGN_TOOLS:
+    _tool["annotations"] = EDIT
+
+MAX_SVG_CONTEXT = 40_000
+
+
+def trim_context(context: dict) -> dict:
+    """The canvas state with its artwork kept within MAX_SVG_CONTEXT characters."""
+    ctx = dict(context or {})
+    selected = ctx.get("selected")
+    if selected and isinstance(selected.get("svg"), str) and len(selected["svg"]) > MAX_SVG_CONTEXT:
+        ctx["selected"] = {**selected, "svg": selected["svg"][:MAX_SVG_CONTEXT] + "…[truncated]"}
+    # Every design's artwork goes along so parts can be matched up, within a budget; the rest just say so.
+    designs = ctx.get("designs")
+    if isinstance(designs, list):
+        budget = MAX_SVG_CONTEXT
+        kept = []
+        for design in designs:
+            if isinstance(design, dict) and isinstance(design.get("svg"), str):
+                if len(design["svg"]) <= budget:
+                    budget -= len(design["svg"])
+                else:
+                    design = {**design, "svg": "(too large to include; select it to see it)"}
+            kept.append(design)
+        ctx["designs"] = kept
+    return ctx
 
 
 TOOLS: list[dict] = [
@@ -130,7 +259,7 @@ TOOLS: list[dict] = [
         "inputSchema": NO_ARGS,
         "annotations": READ_ONLY,
     },
-    *_design_tools(),
+    *DESIGN_TOOLS,
     {
         "name": "delete_design",
         "description": "Remove a design from the canvas.",
@@ -228,7 +357,7 @@ TOOLS: list[dict] = [
     },
 ]
 
-DESIGN_ACTIONS = {tool["function"]["name"] for tool in llm.TOOLS}
+DESIGN_ACTIONS = {tool["name"] for tool in DESIGN_TOOLS}
 TOOL_NAMES = {tool["name"] for tool in TOOLS}
 
 
@@ -338,7 +467,7 @@ class Server:
             state = await self.machine_state()
             try:
                 canvas = await self.bridge.call("context", {})
-                state["canvas"] = llm.trim_context(canvas)
+                state["canvas"] = trim_context(canvas)
             except ToolError as exc:
                 state["canvas"] = str(exc)
             return text(state)

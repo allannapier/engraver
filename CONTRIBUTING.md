@@ -32,7 +32,7 @@ The browser test is described in the [README](README.md#tests). CI runs all of i
 
 This app drives a machine that can start a fire or damage eyesight, so a few things are not up for change without a very good reason:
 
-- The assistant can only edit the canvas and layer settings. Nothing a model returns may move the head or fire the laser.
+- MCP clients can never start or resume a job, send console commands, home or unlock. A job starts only when the person clicks Start burning.
 - Stop is feed hold, wait for motion to end, then soft reset. Any GRBL error on a job line halts the job.
 - The server listens on loopback only and rejects foreign Host and Origin headers.
 - Every SVG that enters the page is sanitised.

@@ -98,7 +98,7 @@ class MaterialLibrary:
                 self._save()
 
     def as_prompt(self) -> str:
-        """The library as text for the assistant, or "" when it's empty."""
+        """The library as text for MCP clients, or "" when it's empty."""
         rows = []
         for mat in self.all():
             parts = []

@@ -19,7 +19,6 @@ def fake(*parts: str) -> str:
     return "-".join(parts)
 
 
-API_KEY = fake("my", "private", "key", "123456")
 TOKEN = fake("tok", "abcdef", "987654")
 ENV_TOKEN = fake("envtoken", "13579", "24680")
 GH_SHAPED = "ghp_" + string.ascii_lowercase + string.digits  # shaped like a GitHub token
@@ -84,7 +83,6 @@ DRAFT = {
                 },
             ],
         },
-        "chat": [{"role": "user", "content": "make a star"}, {"role": "assistant", "content": "Added a star."}],
     },
 }
 
@@ -115,40 +113,37 @@ def test_report_has_what_someone_fixing_it_needs(client):
     assert '"kind": "frame"' in body and "G1 X30 Y370" in body  # the last job and its G-code
     assert "<rect width='10' height='10'/>" in body
     assert "data:(picture left out)" in body and "AAAAAAAA" not in body
-    assert "make a star" not in body  # the conversation is opt-in
     assert body.rstrip().endswith("what must keep working.")
     assert len(body) < bugs.MAX_BODY
 
 
 def test_sections_follow_the_tick_boxes(client):
-    draft = {**DRAFT, "include": {"details": False, "logs": False, "design": False, "chat": True}}
+    draft = {**DRAFT, "include": {"details": False, "logs": False, "design": False}}
     body = client.post("/api/bug/preview", json=draft).json()["body"]
-    assert "Assistant conversation (last 2 messages)" in body and "USER: make a star" in body
     for absent in ("Laser console", "Browser errors", "Machine state", "Layers and designs", "Recent clicks"):
         assert absent not in body
     assert "## Environment" in body  # always there: it's the minimum needed to reproduce
 
 
 def test_secrets_never_reach_the_report(client, monkeypatch):
-    client.put("/api/config", json={"llm": {"model": "x/y", "api_key": API_KEY}, "bugs": {"token": TOKEN}})
+    client.put("/api/config", json={"bugs": {"token": TOKEN}})
     monkeypatch.setenv("GITHUB_TOKEN", ENV_TOKEN)
     draft = json.loads(json.dumps(DRAFT))
-    draft["description"] = f"It failed with {API_KEY} and {GH_SHAPED} in the log"
+    draft["description"] = f"It failed with {TOKEN} and {GH_SHAPED} in the log"
     draft["client"]["errors"] = [f"Authorization: Bearer {TOKEN}", f"key {SK_SHAPED} leaked", f"env {ENV_TOKEN}"]
     draft["client"]["events"] = [f"read {bugs.Path.home()}/.engraver/config.json"]
     body = client.post("/api/bug/preview", json=draft).json()["body"]
-    for secret in (API_KEY, TOKEN, ENV_TOKEN, GH_SHAPED[:14], SK_SHAPED[:16], str(bugs.Path.home()) + "/"):
+    for secret in (TOKEN, ENV_TOKEN, GH_SHAPED[:14], SK_SHAPED[:16], str(bugs.Path.home()) + "/"):
         assert secret not in body
     assert "[removed]" in body and "~/.engraver/config.json" in body
-    assert "assistant model: x/y (key saved)".lower() in body.lower()
     # Pasted into the review box by hand, it is still removed on the way out.
-    client.post("/api/bug/report", json={"title": f"Leak {TOKEN}", "body": f"contains {API_KEY} again"})
+    client.post("/api/bug/report", json={"title": f"Leak {TOKEN}", "body": f"contains {ENV_TOKEN} again"})
     _, title, sent = client.app.state.github.created[0]
-    assert TOKEN not in title and API_KEY not in sent
+    assert TOKEN not in title and ENV_TOKEN not in sent
 
 
 def test_oversized_reports_drop_the_least_useful_sections():
-    draft = bugs.BugDraft.model_validate({**DRAFT, "include": {"chat": True}})
+    draft = bugs.BugDraft.model_validate(DRAFT)
     env = {
         "app": {"version": "0.1.0", "commit": "abc1234", "python": "3.13", "platform": "test"},
         "status": {"connected": False, "settings": {str(i): "x" * 40 for i in range(200)}},
@@ -163,7 +158,6 @@ def test_oversized_reports_drop_the_least_useful_sections():
         "designs": [{"id": str(i), "svg": "<path d='" + "M0 0L1 1" * 2000 + "'/>"} for i in range(60)],
     }
     draft.client.errors = ["e" * 550] * 60
-    draft.client.chat = [{"role": "user", "content": "c" * 1500}] * 8
     body = bugs.compose(draft, env)
     assert len(body) <= bugs.MAX_BODY
     assert "Server warnings and errors" in body and "Browser errors" in body  # the highest-value parts survive

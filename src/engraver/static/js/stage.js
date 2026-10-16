@@ -365,7 +365,7 @@ export function onDoubleClick(fn) {
   });
 }
 
-/** A PNG of the bed and the designs on it, for the assistant to look at. */
+/** A PNG of the bed and the designs on it, for an MCP client to look at. */
 /** The canvas as a picture. `area` ({x, y, w, h} in mm) crops it, e.g. to the designs for a thumbnail. */
 export async function snapshotPng(maxSide = 1024, area = null) {
   const bb = bed();

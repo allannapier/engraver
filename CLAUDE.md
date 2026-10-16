@@ -12,24 +12,24 @@ Local browser app that drives a GRBL diode laser (Atomstack A10). Python/FastAPI
 
 ## Rules that must keep holding
 
-- The assistant only returns canvas and layer edits (`llm.TOOLS`). Never add a tool or route that lets its output move the head or fire the laser.
-- MCP clients (`mcp.py`) may connect, jog, set or go to the origin, frame (laser off, or the person's 2 % dot), pause and stop. They never start or resume a job, send console commands, home or unlock: `request_job_start` only opens `run.confirmAndStart` in the page, and the job starts when the person clicks Start burning. Canvas edits go through the assistant's `applyAction`, one undo step each.
+- There is no built-in AI assistant: AI comes in over MCP (`mcp.py`). Don't add an LLM client, provider settings or API keys to the app.
+- MCP clients (`mcp.py`) may connect, jog, set or go to the origin, frame (laser off, or the person's 2 % dot), pause and stop. They never start or resume a job, send console commands, home or unlock: `request_job_start` only opens `run.confirmAndStart` in the page, and the job starts when the person clicks Start burning. Canvas edits go through `static/js/canvasedit.js` `applyAction`, one undo step each. Design guidance for clients lives in `mcp.INSTRUCTIONS`.
 - Stop is feed hold, wait for motion to end, then soft reset (`GrblController._begin_halt`). Don't reset mid-motion: GRBL alarms and loses position. "Ended" is judged only from status reports that arrived after the hold, and the hold is re-sent if one shows motion (a hold that lands before motion starts is ignored by GRBL).
 - Any GRBL error on a job line halts the job.
 - The server binds to loopback only, and `_host_ok` rejects foreign Host and Origin headers. Keep both.
-- Every SVG that enters the page goes through `sanitizeSvg` or `sanitizeMarkup` (imports, pastes, assistant output, project files, saved state).
+- Every SVG that enters the page goes through `sanitizeSvg` or `sanitizeMarkup` (imports, pastes, MCP edits, project files, saved state).
 - Power is scaled by the controller's `$30`, not the saved profile, when connected.
 - Frame's visible dot is capped at 2 % in `gcode.frame_gcode`.
 - The built-in table in `materials.py` is never modified at runtime. Saving against a built-in material copies it into the person's library (`library.py`, ids start with `my-`).
-- The assistant reads the material library but has no tool to write to it: entries are things the person saved or picked from a burned test.
-- A bug report is only filed after the person has seen its full text (`bugreport.js` review step). The server files exactly the text it is given, after `bugs.scrub`. The assistant has no tool to file one.
+- MCP clients read the material library but have no tool to write to it: entries are things the person saved or picked from a burned test.
+- A bug report is only filed after the person has seen its full text (`bugreport.js` review step). The server files exactly the text it is given, after `bugs.scrub`. MCP clients have no tool to file one.
 - Anything new that goes into a bug report passes through `bugs.scrub`, and typed text is never captured by `diagnostics.js`.
 - Tests must never create a real issue: replace `app.state.github` in pytest, and route `/api/bug/report` in the browser test. `ENGRAVER_BUG_DRY_RUN=1` forces the link fallback.
 
 ## Conventions
 
 - The material test (`static/js/testgrid.js`) is an ordinary job with one layer per square, built in the browser and run in origin mode. Keep it that way rather than adding a server-side generator.
-- Canvas coordinates are mm, origin top-left, Y down. Machine coordinates are origin front-left, Y away. The flip happens once, in `gcode.build_job`. Anything shown to the user or the assistant uses machine coordinates.
+- Canvas coordinates are mm, origin top-left, Y down. Machine coordinates are origin front-left, Y away. The flip happens once, in `gcode.build_job`. Anything shown to the user or an MCP client uses machine coordinates.
 - Speeds are mm/min, power is percent.
 - An object is SVG markup plus a viewBox, scaled into `x, y, w, h` and rotated about its centre. Geometry is never rewritten; tracing reads the live DOM.
 - Change the simulator alongside the controller: tests rely on it behaving like GRBL 1.1 (128-byte RX buffer, 16-block planner, sync on `$` and `G10`).

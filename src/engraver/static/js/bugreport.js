@@ -9,7 +9,7 @@ import { selectedMaterial } from "./library.js";
 import { test } from "./testgrid.js";
 
 // Kept while the page is open, so backing out of the review step loses nothing.
-const draft = { title: "", description: "", expected: "", include: { details: true, logs: true, design: true, chat: false } };
+const draft = { title: "", description: "", expected: "", include: { details: true, logs: true, design: true } };
 
 function clientInfo() {
   const material = selectedMaterial();
@@ -30,9 +30,6 @@ function clientInfo() {
           })),
         }
       : null,
-    chat: draft.include.chat
-      ? state.chat.slice(-8).map((m) => ({ role: m.role, content: m.notes?.length ? `${m.content}\n[${m.notes.join("; ")}]` : m.content }))
-      : [],
   };
 }
 
@@ -66,8 +63,7 @@ async function writeStep(status) {
       h("div", { class: "field" }, "Include with the report",
         tick("details", "Machine state, last job and material settings"),
         tick("logs", "Console, error logs and recent clicks"),
-        tick("design", "Layers and designs on the canvas (pictures left out)"),
-        tick("chat", "The last few assistant messages")),
+        tick("design", "Layers and designs on the canvas (pictures left out)")),
       destination(status),
       h("div", { class: "actions" },
         h("button", { class: "btn", value: "", formnovalidate: true }, "Cancel"),

@@ -1,4 +1,4 @@
-"""Saved designs and assistant chats: kept in folders next to the settings file."""
+"""Saved designs: kept in a folder next to the settings file."""
 
 import json
 
@@ -74,7 +74,6 @@ def test_newest_design_comes_first_and_bad_thumbs_are_dropped(client):
 def test_ids_that_are_not_ours_are_refused(client):
     assert client.get("/api/designs/..%2Fconfig").status_code == 404
     assert client.get("/api/designs/NOT-AN-ID").status_code == 404
-    assert client.put("/api/chats/xyz", json={"title": "t", "messages": []}).status_code == 404
 
 
 def test_a_damaged_file_is_skipped(client):
@@ -84,28 +83,7 @@ def test_a_damaged_file_is_skipped(client):
     assert [d["id"] for d in client.get("/api/designs").json()["designs"]] == [meta["id"]]
 
 
-def test_chats_are_kept_and_reopened(client):
-    chat_id = "0123456789abcdef0123456789abcdef"
-    messages = [
-        {"role": "user", "content": "Make a fox"},
-        {"role": "assistant", "content": "Done.", "notes": ["Added"]},
-    ]
-    meta = client.put(f"/api/chats/{chat_id}", json={"title": "Make a fox", "messages": messages}).json()
-    assert meta == {"id": chat_id, "name": "Make a fox", "updated": meta["updated"], "count": 2}
-    assert client.get("/api/chats").json()["chats"][0]["count"] == 2
-    assert client.get(f"/api/chats/{chat_id}").json()["data"] == messages
-    assert client.delete(f"/api/chats/{chat_id}").json() == {"chats": []}
-
-
-def test_old_chats_are_pruned(tmp_path):
-    shelf = Shelf(tmp_path, noun="chat", max_items=3, max_bytes=10_000, prune=True)
-    ids = [f"{n:016x}" for n in range(5)]
-    for item_id in ids:
-        shelf.put(item_id, item_id, [])
-    assert [m["id"] for m in shelf.list()] == ids[:1:-1]
-
-
-def test_designs_are_capped_not_pruned(tmp_path):
+def test_designs_are_capped(tmp_path):
     shelf = Shelf(tmp_path, noun="design", max_items=2, max_bytes=10_000)
     shelf.put("a" * 16, "one", {})
     shelf.put("b" * 16, "two", {})

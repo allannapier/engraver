@@ -6,7 +6,7 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Allan Napier" }]
-keywords = ["laser", "engraver", "grbl", "gcode", "atomstack"]
+keywords = ["laser", "engraver", "grbl", "gcode", "atomstack", "mcp"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Web Environment",
@@ -22,8 +22,6 @@ dependencies = [
     "pydantic>=2.7",
     "pillow>=10.0",
     "numpy>=1.26",
-    # 1.82.7 and 1.82.8 were malicious uploads (March 2026); stay above them.
-    "litellm>=1.83.0",
 ]
 
 [project.scripts]

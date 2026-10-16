@@ -175,7 +175,7 @@ assert.equal(await store((s) => s.state.doc.objects[2].text.value), "Scooby", "t
 assert.equal(await store((s) => s.state.doc.objects.length), 3, "editing does not add an object");
 await page.click('[data-tool="undo"]');
 
-step("assistant-style SVG text, even inside an inherited-attribute group, can be edited");
+step("generated SVG text, even inside an inherited-attribute group, can be edited");
 await paste(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40" fill="#000" font-family="Impact" font-weight="bold"><text x="0" y="30" font-size="30">Hi</text></svg>`);
 await page.waitForFunction(() => document.querySelectorAll(".obj").length === 4);
 await page.waitForSelector("#prop-edit-text:not([hidden])");
@@ -419,139 +419,9 @@ const scored = await store((s) => ({ ...s.state.doc.layers[1] }));
 assert.deepEqual([scored.speed, scored.power, scored.passes, scored.mode], [2000, 30, 1, "line"]);
 await shot("09-material");
 
-step("the assistant's reply changes the canvas and the layers");
-await page.route("**/api/state", async (route) => {
-  const response = await route.fetch();
-  const body = await response.json();
-  body.config.llm.model = "test/model";
-  await route.fulfill({ response, json: body });
-});
-let asked;
-await page.route("**/api/ai/chat", async (route) => {
-  asked = route.request().postDataJSON();
-  await route.fulfill({
-    json: {
-      text: "Here's a **star** for the coaster, with `plywood` settings.",
-      actions: [
-        { type: "add_design", name: "Star", mode: "fill", width_mm: 60, x_mm: 300, y_mm: 40,
-          svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><polygon points="50,5 61,38 96,38 68,59 79,93 50,72 21,93 32,59 4,38 39,38" fill="#000"/></svg>' },
-        { type: "set_layer", layer_id: asked.context.layers[0].id, speed: 5000, power: 55 },
-        { type: "set_layer", layer_id: "nope", speed: 1 },
-      ],
-    },
-  });
-});
-await page.reload();
-await ready();
-await page.click('[data-tab="assistant"]');
-await page.fill("#tab-assistant textarea", "Make a star for a plywood coaster");
-await page.press("#tab-assistant textarea", "Enter");
-await page.waitForSelector(".msg.assistant:not(.thinking)");
-assert.equal(asked.messages.at(-1).content, "Make a star for a plywood coaster");
-assert.equal(asked.context.material.name, "Plywood (basswood/birch), 3 mm");
-assert.equal(asked.context.material.from, "the person's own materials");
-assert.equal(asked.context.material.score.source, "test");
-assert.ok(asked.image.startsWith("data:image/png"), "a picture of the canvas is sent");
-const star = await store((s) => {
-  const o = s.state.doc.objects.at(-1);
-  return { ...o, layer: s.layerById(o.layerId) };
-});
-assert.equal(star.name, "Star");
-// Bold and code come out as formatting, not as stray asterisks and backticks.
-const reply = page.locator(".msg.assistant").last();
-assert.equal(await reply.locator("strong").textContent(), "star");
-assert.equal(await reply.locator("code").textContent(), "plywood");
-assert.ok(!(await reply.textContent()).includes("**"));
-// The message box stays inside the panel even with a much wider font.
-const fits = await page.evaluate(() => {
-  const panel = document.getElementById("tab-assistant");
-  panel.style.fontFamily = "monospace";
-  panel.style.fontSize = "19px";
-  const edge = panel.getBoundingClientRect().right - parseFloat(getComputedStyle(panel).paddingRight);
-  const widest = Math.max(...[...panel.querySelectorAll("textarea, .composer button, .msg")].map((node) => node.getBoundingClientRect().right));
-  panel.style.fontFamily = panel.style.fontSize = "";
-  return widest <= edge + 0.5;
-});
-assert.ok(fits, "assistant messages and message box fit inside the panel");
-near(star.w, 60, 0.01);
-near(star.x, 300, 0.01);
-near(400 - (star.y + star.h), 40, 0.01);
-assert.deepEqual([star.layer.mode, star.layer.speed, star.layer.power], ["fill", 5000, 55]);
-const notes = await page.locator(".msg.assistant .did").allTextContents();
-assert.ok(notes.some((n) => n.startsWith('Added "Star"')) && notes.some((n) => n.startsWith("Skipped one change")), notes.join(" | "));
-await shot("06-assistant");
-await page.keyboard.press("Escape");
-await page.locator("#stage").focus();
-await page.keyboard.press("Control+z");
-assert.equal(await store((s) => s.state.doc.objects.length), 1, "one undo reverses the whole reply");
-
-step("a reference picture goes to the assistant, scaled down, until it is removed");
-const bigPng = Buffer.from(await page.evaluate(() => {
-  const c = document.createElement("canvas");
-  c.width = 2400;
-  c.height = 1200;
-  const g = c.getContext("2d");
-  g.fillStyle = "#c33";
-  g.fillRect(200, 200, 800, 800);
-  return c.toDataURL("image/png").split(",")[1];
-}), "base64");
-await page.click('[data-tab="assistant"]');
-await page.locator('#tab-assistant input[type="file"]').setInputFiles({ name: "sketch.png", mimeType: "image/png", buffer: bigPng });
-await page.waitForSelector(".ref-attach:not([hidden]) img");
-assert.equal(await page.locator(".ref-attach strong").textContent(), "sketch.png");
-await page.fill("#tab-assistant textarea", "Trace this sketch");
-await page.press("#tab-assistant textarea", "Enter");
-await page.waitForFunction(() => document.querySelectorAll(".msg.assistant:not(.thinking)").length >= 2);
-assert.ok(asked.reference.startsWith("data:image/jpeg;base64,"), "the reference is sent as a JPEG");
-const refSize = await page.evaluate((url) => new Promise((resolve) => {
-  const img = new Image();
-  img.onload = () => resolve([img.naturalWidth, img.naturalHeight]);
-  img.src = url;
-}), asked.reference);
-assert.deepEqual(refSize, [1024, 512], "the reference is scaled to 1024 px on the long side");
-assert.equal(await page.locator(".msg.user .msg-ref").count(), 1, "the sent message shows the picture");
-await page.click('.ref-attach button:has-text("Remove")');
-assert.ok(await page.locator(".ref-attach").isHidden());
-await page.fill("#tab-assistant textarea", "Thanks");
-await page.press("#tab-assistant textarea", "Enter");
-await page.waitForFunction(() => document.querySelectorAll(".msg.assistant:not(.thinking)").length >= 3);
-assert.equal(asked.reference, null, "a removed picture is no longer sent");
-await page.keyboard.press("Escape");
-await page.locator("#stage").focus();
-await page.keyboard.press("Control+z");
-await page.keyboard.press("Control+z");
-assert.equal(await store((s) => s.state.doc.objects.length), 1);
-
-step("a chat is kept across a reload, cleared with New chat and reopened");
-// The chat is saved just after the reply shows; wait for it before reloading.
-await page.waitForFunction(async () => (await (await fetch("/api/chats")).json()).chats[0]?.count === 6);
-await page.reload();
-await ready();
-await page.click('[data-tab="assistant"]');
-await page.waitForFunction(() => document.querySelectorAll(".msg.user").length === 3);
-assert.equal(await page.locator(".msg.user").first().textContent(), "Make a star for a plywood coaster");
-await page.click('#tab-assistant button:has-text("New chat")');
-assert.equal(await page.locator(".msg").count(), 0);
-await page.click('#tab-assistant button:has-text("Back to last chat")');
-await page.waitForFunction(() => document.querySelectorAll(".msg.user").length === 3);
-await page.click('#tab-assistant button:has-text("New chat")');
-await page.fill("#tab-assistant textarea", "A second chat");
-await page.press("#tab-assistant textarea", "Enter");
-await page.waitForSelector(".msg.assistant:not(.thinking)");
-await page.click('#tab-assistant button:has-text("Chats")');
-await page.waitForFunction(() => document.querySelectorAll("dialog .chat-row").length === 2);
-const chatNames = await page.locator("dialog .chat-row strong").allTextContents();
-assert.equal(chatNames.length, 2, chatNames.join(" | "));
-assert.ok(chatNames[0].startsWith("A second chat") && chatNames[1].startsWith("Make a star"), chatNames.join(" | "));
-await page.locator("dialog .chat-row").nth(1).getByRole("button", { name: "Open" }).click();
-await page.waitForFunction(() => document.querySelectorAll(".msg.user").length === 3);
-await page.locator("#stage").focus();
-await page.keyboard.press("Control+z");
-assert.equal(await store((s) => s.state.doc.objects.length), 1);
-
-step("settings are saved from Setup");
-await page.unroute("**/api/state");
+step("settings are saved from Setup, which shows how to add Engraver to Claude Code");
 await page.click('[data-tab="setup"]');
+assert.equal(await page.textContent("#tab-setup pre.command"), `claude mcp add --transport http engraver ${BASE}/mcp`);
 await page.fill('[data-machine="bed_w"]', "400");
 await page.getByRole("button", { name: "Save machine" }).click();
 await page.waitForFunction(() => window.__store.state.machine.bed_w === 400);
@@ -621,7 +491,6 @@ for (const expected of [
   '"kind": "job"',
   "Layers and designs on the canvas",
 ]) assert.ok(reportText.includes(expected), `report should include: ${expected}`);
-assert.ok(!reportText.includes("Assistant conversation"), "the conversation is left out unless ticked");
 await shot("10-bug-review");
 await page.click('dialog button[value="back"]');
 assert.equal(await page.inputValue('dialog input[type="text"]'), "Frame goes off the bed", "going back keeps what was typed");
@@ -692,51 +561,6 @@ await ready();
 await page.waitForSelector(".obj");
 assert.equal(await store((s) => s.state.doc.objects.length), 1);
 
-step("assistant parts drawn in one viewBox line up across layers");
-await page.route("**/api/state", async (route) => {
-  const response = await route.fetch();
-  const body = await response.json();
-  body.config.llm.model = "test/model";
-  await route.fulfill({ response, json: body });
-});
-await page.unroute("**/api/ai/chat");
-await page.route("**/api/ai/chat", async (route) => {
-  asked = route.request().postDataJSON();
-  await route.fulfill({
-    json: {
-      text: "Two tokens with a mark engraved on each.",
-      actions: [
-        { type: "add_design", name: "Token outlines", mode: "line", width_mm: 60, x_mm: 100, y_mm: 100, note: "Cut outlines.",
-          svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 24"><g fill="none" stroke="#000"><circle cx="12" cy="12" r="12"/><circle cx="48" cy="12" r="12"/></g></svg>' },
-        { type: "add_design", name: "Token marks", mode: "fill", width_mm: 999, align_with: "Token outlines", note: "Marks.",
-          svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 24"><rect x="10" y="10" width="4" height="4"/><rect x="46" y="10" width="4" height="4"/></svg>' },
-      ],
-    },
-  });
-});
-await page.reload();
-await ready();
-await page.click('[data-tab="assistant"]');
-await page.fill("#tab-assistant textarea", "Two tokens with a mark on each");
-await page.press("#tab-assistant textarea", "Enter");
-await page.waitForFunction(() => window.__store.state.doc.objects.some((o) => o.name === "Token marks"));
-assert.ok(asked.context.designs.every((d) => d.kind !== "svg" || d.svg?.startsWith("<svg")), "every design's SVG goes to the assistant");
-const [outline, marks] = await store((s) => ["Token outlines", "Token marks"].map((n) => {
-  const o = s.state.doc.objects.find((d) => d.name === n);
-  return { x: o.x, y: o.y, w: o.w, h: o.h };
-}));
-near(outline.w, 60, 0.01);
-near(marks.w, 40, 0.01); // keeps the outline's scale, not its own width_mm
-near(marks.x - outline.x, 10, 0.01);
-near(marks.y - outline.y, 10, 0.01);
-const lined = await page.locator(".msg.assistant .did").allTextContents();
-assert.ok(lined.some((n) => n.includes('lined up with "Token outlines"')), lined.join(" | "));
-await page.keyboard.press("Escape");
-await page.locator("#stage").focus();
-await page.keyboard.press("Control+z");
-assert.equal(await store((s) => s.state.doc.objects.length), 1);
-await page.unroute("**/api/state");
-
 step("an MCP client edits the canvas through the page, frames, and can only ask to start");
 let rpcId = 0;
 const mcp = async (method, params) => {
@@ -777,7 +601,7 @@ r = await tool("set_layer", { layer_id: listed.layer_id, speed: 4000, power: 35 
 assert.equal(r.error, false, r.text);
 assert.deepEqual(await store((s, id) => { const l = s.layerById(id); return [l.speed, l.power]; }, listed.layer_id), [4000, 35]);
 r = await tool("transform_design", { design_id: "nope", x_mm: 5 });
-assert.ok(r.error && /isn't on the canvas/.test(r.text), r.text);
+assert.ok(r.error && /no design with that id/.test(r.text), r.text);
 r = await tool("get_canvas_image");
 assert.ok(r.image && r.image.length > 1000, "canvas picture comes back as a PNG");
 r = await tool("frame_job");
@@ -797,6 +621,30 @@ assert.equal(await store((s) => s.state.doc.objects.length), countBefore);
 await page.locator("#stage").focus();
 await page.keyboard.press("Control+z");
 assert.equal(await store((s) => s.state.doc.objects.length), countBefore + 1, "each change is one undo step");
+
+step("parts an MCP client draws in one viewBox line up across layers");
+r = await tool("add_design", {
+  name: "Token outlines", mode: "line", width_mm: 60, x_mm: 100, y_mm: 100,
+  svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 24"><g fill="none" stroke="#000"><circle cx="12" cy="12" r="12"/><circle cx="48" cy="12" r="12"/></g></svg>',
+});
+assert.equal(r.error, false, r.text);
+r = await tool("add_design", {
+  name: "Token marks", mode: "fill", width_mm: 999, align_with: r.data.design_id,
+  svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 24"><rect x="10" y="10" width="4" height="4"/><rect x="46" y="10" width="4" height="4"/></svg>',
+});
+assert.ok(!r.error && r.data.text.includes('lined up with "Token outlines"'), r.text);
+const [outline, marks] = await store((s) => ["Token outlines", "Token marks"].map((n) => {
+  const o = s.state.doc.objects.find((d) => d.name === n);
+  return { x: o.x, y: o.y, w: o.w, h: o.h };
+}));
+near(outline.w, 60, 0.01);
+near(marks.w, 40, 0.01); // keeps the outline's scale, not its own width_mm
+near(marks.x - outline.x, 10, 0.01);
+near(marks.y - outline.y, 10, 0.01);
+r = await tool("get_state");
+const others = r.data.canvas.designs.filter((d) => d.kind === "svg" && d.id !== r.data.canvas.selected?.id);
+assert.ok(others.length >= 1 && others.every((d) => d.svg?.startsWith("<svg")), "every design's SVG goes to the client");
+assert.ok(r.data.canvas.selected.svg.startsWith("<svg"), "the selected design's SVG goes along too");
 
 await page.click("#connect");
 await waitStatus((s) => !s.connected);

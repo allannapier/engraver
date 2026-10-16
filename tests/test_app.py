@@ -1,4 +1,4 @@
-"""HTTP API: request guard, config, jobs through the simulator, assistant with a fake provider."""
+"""HTTP API: request guard, config, jobs through the simulator, material library."""
 
 import json
 import time
@@ -61,22 +61,20 @@ def test_static_app_is_served(client):
     assert client.get("/").status_code == 200
 
 
-def test_config_round_trip_never_returns_the_key(client):
-    r = client.put(
-        "/api/config",
-        json={"llm": {"model": "anthropic/claude-sonnet-5-5", "api_key": "sk-secret-1234"}, "machine": {"bed_w": 400}},
-    )
-    cfg = r.json()["config"]
-    assert "api_key" not in cfg["llm"] and cfg["llm"]["api_key_set"] and cfg["llm"]["api_key_hint"] == "…1234"
-    assert cfg["machine"]["bed_w"] == 400
-    assert "sk-secret-1234" not in client.get("/api/state").text
-    # Saving again without a key keeps the stored one.
-    client.put("/api/config", json={"llm": {"model": "openai/gpt-x", "api_key": ""}})
-    assert client.store.settings.llm.api_key == "sk-secret-1234"
-    assert json.loads(client.store.path.read_text())["llm"]["model"] == "openai/gpt-x"
-    client.put("/api/config", json={"llm": {"clear_api_key": True}})
-    assert client.store.settings.llm.api_key == ""
+def test_config_round_trip(client):
+    cfg = client.put("/api/config", json={"machine": {"bed_w": 400}}).json()["config"]
+    assert cfg["machine"]["bed_w"] == 400 and "llm" not in cfg
+    assert json.loads(client.store.path.read_text())["machine"]["bed_w"] == 400
     assert client.put("/api/config", json={"machine": {"bed_w": "wide"}}).status_code == 422
+
+
+def test_an_old_assistant_key_is_removed_from_disk(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"machine": {"bed_w": 410}, "llm": {"model": "x/y", "api_key": "sk-old-key-1234"}}))
+    store = ConfigStore(path)
+    assert store.settings.machine.bed_w == 410
+    saved = json.loads(path.read_text())
+    assert "llm" not in saved and "sk-old-key" not in path.read_text() and saved["machine"]["bed_w"] == 410
 
 
 def test_machine_actions_need_a_connection(client):
@@ -153,192 +151,6 @@ def test_live_updates_over_websocket(client):
         assert {"status", "log"} <= seen
 
 
-# --- assistant ---------------------------------------------------------------
-
-
-def fake_response(text="", tool_calls=()):
-    calls = [
-        SimpleNamespace(function=SimpleNamespace(name=name, arguments=json.dumps(args))) for name, args in tool_calls
-    ]
-    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text, tool_calls=calls or None))])
-
-
-def test_assistant_needs_a_model(client):
-    r = client.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]})
-    assert r.status_code == 400 and "Setup" in r.json()["detail"]
-
-
-def test_assistant_returns_actions_and_sees_context(client):
-    client.put("/api/config", json={"llm": {"model": "test/model", "api_key": "sk-abcdefgh"}})
-    calls = []
-
-    async def completion(**kwargs):
-        calls.append(kwargs)
-        return fake_response(
-            "Added a star on the engrave layer.",
-            [
-                (
-                    "add_design",
-                    {
-                        "name": "Star",
-                        "svg": "<svg xmlns='http://www.w3.org/2000/svg'/>",
-                        "width_mm": 60,
-                        "mode": "fill",
-                    },
-                ),
-                ("set_layer", {"layer_id": "L1", "speed": 6000, "power": 50}),
-                ("fire_laser", {"power": 100}),
-            ],
-        )
-
-    client.app.state.completion = completion
-    body = {
-        "messages": [{"role": "user", "content": "make a star for 3mm plywood"}],
-        "context": {"layers": [{"id": "L1", "mode": "fill"}], "objects": []},
-        "image": "data:image/png;base64,AAAA",
-    }
-    reply = client.post("/api/ai/chat", json=body).json()
-    assert reply["text"].startswith("Added a star")
-    assert [a["type"] for a in reply["actions"]] == ["add_design", "set_layer"]  # unknown tools are dropped
-    sent = calls[0]
-    assert sent["model"] == "test/model" and sent["api_key"] == "sk-abcdefgh"
-    names = {tool["function"]["name"] for tool in sent["tools"]}
-    assert names == {"add_design", "replace_design", "transform_design", "add_layer", "set_layer"}
-    system = sent["messages"][0]["content"]
-    assert "Plywood" in system and "PVC" in system and "cannot move the laser head" in system
-    user = sent["messages"][-1]["content"]
-    assert user[1]["type"] == "image_url" and '"layers"' in user[0]["text"]
-
-
-def test_assistant_falls_back_when_the_model_rejects_tools(client):
-    client.put("/api/config", json={"llm": {"model": "ollama/tiny", "vision": True}})
-    attempts = []
-
-    class BadRequestError(Exception):
-        pass
-
-    async def completion(**kwargs):
-        has_image = isinstance(kwargs["messages"][-1]["content"], list)
-        attempts.append(("tools" in kwargs, has_image))
-        if "tools" in kwargs:
-            raise BadRequestError("this model does not support tools")
-        return fake_response("Here you go.\n```svg\n<svg viewBox='0 0 10 10'><circle cx='5' cy='5' r='4'/></svg>\n```")
-
-    client.app.state.completion = completion
-    body = {
-        "messages": [{"role": "user", "content": "circle"}],
-        "context": {"selected": {"id": "o7", "svg": "<svg/>"}},
-        "image": "data:image/png;base64,AAAA",
-    }
-    reply = client.post("/api/ai/chat", json=body).json()
-    assert attempts == [(True, True), (True, False), (False, False)]
-    assert reply["actions"] == [
-        {
-            "type": "replace_design",
-            "design_id": "o7",
-            "svg": "<svg viewBox='0 0 10 10'><circle cx='5' cy='5' r='4'/></svg>",
-        }
-    ]
-    assert reply["text"] == "Here you go."
-
-
-REF = "data:image/jpeg;base64,/9j/AAAA"
-
-
-def test_assistant_gets_the_reference_picture_before_the_canvas(client):
-    client.put("/api/config", json={"llm": {"model": "test/model", "vision": True}})
-    calls = []
-
-    async def completion(**kwargs):
-        calls.append(kwargs)
-        return fake_response("Done.")
-
-    client.app.state.completion = completion
-    body = {
-        "messages": [{"role": "user", "content": "like this"}],
-        "image": "data:image/png;base64,AAAA",
-        "reference": REF,
-    }
-    assert client.post("/api/ai/chat", json=body).status_code == 200
-    text, ref, canvas = calls[0]["messages"][-1]["content"]
-    assert ref["image_url"]["url"] == REF and canvas["image_url"]["url"].startswith("data:image/png")
-    assert "reference picture" in text["text"] and "last attached image is the canvas" in text["text"]
-
-
-def test_reference_picture_is_sent_even_with_canvas_vision_off(client):
-    client.put("/api/config", json={"llm": {"model": "test/model", "vision": False}})
-    calls = []
-
-    async def completion(**kwargs):
-        calls.append(kwargs)
-        return fake_response("Done.")
-
-    client.app.state.completion = completion
-    body = {
-        "messages": [{"role": "user", "content": "like this"}],
-        "image": "data:image/png;base64,AAAA",
-        "reference": REF,
-    }
-    client.post("/api/ai/chat", json=body)
-    content = calls[0]["messages"][-1]["content"]
-    assert [part["type"] for part in content] == ["text", "image_url"]
-    assert content[1]["image_url"]["url"] == REF and "as it looks now" not in content[0]["text"]
-
-
-def test_reference_picture_is_never_dropped_silently(client):
-    client.put("/api/config", json={"llm": {"model": "ollama/tiny", "vision": True}})
-    attempts = []
-
-    class BadRequestError(Exception):
-        pass
-
-    async def completion(**kwargs):
-        content = kwargs["messages"][-1]["content"]
-        attempts.append(sum(1 for part in content if part.get("type") == "image_url"))
-        raise BadRequestError("this model does not support images")
-
-    client.app.state.completion = completion
-    body = {
-        "messages": [{"role": "user", "content": "like this"}],
-        "image": "data:image/png;base64,AAAA",
-        "reference": REF,
-    }
-    r = client.post("/api/ai/chat", json=body)
-    assert attempts == [2, 1, 1]  # the canvas picture can go, the reference always stays
-    assert r.status_code == 400 and "couldn't take the reference picture" in r.json()["detail"]
-
-
-def test_reference_picture_must_be_an_image_data_url(client):
-    client.put("/api/config", json={"llm": {"model": "test/model"}})
-    for bad in ("https://example.com/cat.png", "data:image/svg+xml;base64,PHN2Zy8+", "data:text/html;base64,AAAA"):
-        r = client.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}], "reference": bad})
-        assert r.status_code == 422, bad
-
-
-def test_assistant_errors_are_readable_and_hide_the_key(client):
-    client.put("/api/config", json={"llm": {"model": "x/y", "api_key": "sk-supersecret"}})
-
-    class AuthenticationError(Exception):
-        pass
-
-    class APIError(Exception):
-        pass
-
-    async def bad_key(**kwargs):
-        raise AuthenticationError("invalid key sk-supersecret")
-
-    client.app.state.completion = bad_key
-    r = client.post("/api/ai/test")
-    assert r.status_code == 400 and "rejected the API key" in r.json()["detail"]
-
-    async def boom(**kwargs):
-        raise APIError("upstream said no to sk-supersecret")
-
-    client.app.state.completion = boom
-    r = client.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]})
-    assert r.status_code == 400 and "sk-supersecret" not in r.text and "upstream said no" in r.text
-
-
 # --- material library ----------------------------------------------------------
 
 PLY = {
@@ -400,28 +212,24 @@ def test_a_damaged_library_file_does_not_break_startup(tmp_path):
         assert c.get("/api/state").json()["library"] == []
 
 
-def test_assistant_is_told_about_the_persons_own_materials(client):
-    client.put("/api/config", json={"llm": {"model": "test/model"}})
-    seen = []
+def test_mcp_clients_are_told_about_the_persons_own_materials(client):
+    def materials():
+        reply = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "list_materials"}},
+        )
+        return reply.json()["result"]["content"][0]["text"]
 
-    async def completion(**kwargs):
-        seen.append(kwargs["messages"][0]["content"])
-        return fake_response("ok")
-
-    client.app.state.completion = completion
-    ask = {"messages": [{"role": "user", "content": "settings for my ply?"}]}
-    client.post("/api/ai/chat", json=ask)
-    assert "hasn't saved any materials" in seen[0]
+    assert "(none saved yet)" in materials()
     client.put(f"/api/library/{PLY['id']}", json=PLY)
-    client.post("/api/ai/chat", json=ask)
-    prompt = seen[1]
+    text = materials()
     assert (
         "Birch ply 3 mm: engrave fill 4000 mm/min 55% x1, interval 0.1 mm (picked from a test grid on 2026-10-11)"
-        in prompt
+        in text
     )
-    assert "cut line 250 mm/min 100% x2 (saved by the person on 2026-10-11)" in prompt
-    assert "slightly warped" in prompt and "take priority" in prompt
-    assert prompt.index("Birch ply 3 mm") < prompt.index("Plywood (basswood/birch), 3 mm")
+    assert "cut line 250 mm/min 100% x2 (saved by the person on 2026-10-11)" in text
+    assert "slightly warped" in text
+    assert text.index("Birch ply 3 mm") < text.index("Plywood (basswood/birch), 3 mm")
 
 
 # --- found while trying the app in a real browser ---------------------------------
@@ -464,10 +272,3 @@ def test_frame_estimate_counts_the_trip_there_and_back(client):
     est = wait_for(client, lambda s: s["job"]["state"] == "running")["job"]["est_seconds"]
     assert 5.5 < est < 7
     client.post("/api/job/stop")
-
-
-def test_silent_tool_reply_gets_a_description():
-    from engraver.llm import _describe
-
-    text = _describe([{"type": "add_design"}, {"type": "set_layer"}, {"type": "set_layer"}])
-    assert "added a design" in text and text.count("changed layer settings") == 1
