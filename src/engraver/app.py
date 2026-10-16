@@ -373,6 +373,8 @@ def create_app(
             kind="job",
             est_seconds=result.est_seconds,
             line_seconds=result.line_seconds,
+            stages=result.stages,
+            line_stages=result.line_stages,
         )
         return result.summary()
 

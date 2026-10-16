@@ -230,3 +230,45 @@ def test_progress_marks_follow_time_not_line_count():
     assert marks == sorted(marks)
     slow_cut = next(i for i, line in enumerate(result.lines) if "F100" in line)
     assert marks[slow_cut - 1] / marks[-1] < 0.1 < slow_cut / len(marks)
+
+
+def test_each_layer_pass_is_a_stage_with_a_sync_between():
+    square = [[(10, 10), (20, 10), (20, 20), (10, 20), (10, 10)]]
+    job = JobSpec(
+        layers=[
+            {"name": "Score", "mode": "line", "speed": 600, "power": 30, "polylines": square},
+            {"name": "Blank", "mode": "fill", "raster": {"x": 0, "y": 0, "w": 10, "h": 10, "png": png(lambda d: None)}},
+            {"name": "Cut", "mode": "line", "speed": 300, "power": 100, "passes": 3, "polylines": square},
+        ]
+    )
+    result = build_job(job, MACHINE)
+    assert [(s["layer"], s["layer_no"], s["layers"], s["pass"], s["passes"]) for s in result.stages] == [
+        ("Score", 1, 2, 1, 1),
+        ("Cut", 2, 2, 1, 3),
+        ("Cut", 2, 2, 2, 3),
+        ("Cut", 2, 2, 3, 3),
+    ]
+    assert len(result.line_stages) == len(result.lines)
+    assert result.line_stages == sorted(result.line_stages)
+    assert result.line_stages[0] == -1  # preamble
+    # Every stage after the first opens with a dwell, so its first acknowledged line means
+    # the previous pass has finished, not just been queued.
+    for index in range(1, len(result.stages)):
+        first = result.line_stages.index(index)
+        assert result.lines[first] == "G4 P0"
+    assert result.lines.count("G4 P0") == 3
+    burns, _ = run(result.lines)
+    assert len(burns) == 16
+
+
+def test_single_pass_job_has_no_extra_dwell():
+    result = build_job(line_job([[(0, 0), (10, 0)]]), MACHINE)
+    assert "G4 P0" not in result.lines
+    assert len(result.stages) == 1
+
+
+def test_fill_passes_are_stages():
+    raster = {"x": 10, "y": 10, "w": 20, "h": 20, "png": png(lambda d: d.rectangle((20, 20, 80, 80), fill="black"))}
+    result = build_job(JobSpec(layers=[{"name": "Fill", "mode": "fill", "passes": 2, "raster": raster}]), MACHINE)
+    assert [s["pass"] for s in result.stages] == [1, 2]
+    assert result.lines.count("G4 P0") == 1

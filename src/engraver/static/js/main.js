@@ -390,7 +390,8 @@ function initStatus() {
       bar.firstElementChild.style.width = `${shown}%`;
       bar.setAttribute("aria-valuenow", shown);
       const label = { running: "running", paused: "paused", stopping: "stopping…", done: "finished", stopped: "stopped", error: "stopped with an error" }[job.state];
-      $("job-title").textContent = `${job.name}: ${label}`;
+      const where = stageText(job.stage);
+      $("job-title").textContent = `${job.name}: ${label}${where ? ` · ${where}` : ""}`;
       $("job-time").textContent = active || job.state === "done"
         ? `${formatDuration(job.elapsed)}${job.est_seconds && job.state !== "done" ? ` of about ${formatDuration(job.est_seconds)}` : ""}`
         : "";
@@ -410,6 +411,15 @@ function initStatus() {
 }
 
 // --- jobs ------------------------------------------------------------------------------------
+
+// "Cut, layer 2 of 3 · pass 4 of 6"; only the parts that have more than one.
+function stageText(stage) {
+  if (!stage) return "";
+  const parts = [];
+  if (stage.layers > 1) parts.push(`${stage.layer}, layer ${stage.layer_no} of ${stage.layers}`);
+  if (stage.passes > 1) parts.push(`${stage.layers > 1 ? "" : `${stage.layer}, `}pass ${stage.pass} of ${stage.passes}`);
+  return parts.join(" · ");
+}
 
 async function startJob() {
   const { job, warnings } = await buildJob("Job");

@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import io
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -102,6 +103,10 @@ class GcodeResult:
     # Estimated seconds elapsed once each line has run: lets progress follow time,
     # not line count (a raster is thousands of quick lines, a cut is a few slow ones).
     line_seconds: list[float] = field(default_factory=list)
+    # What the machine is working on: one entry per layer pass, and the index of the
+    # entry each line belongs to (-1 before the first), so the app can show "pass 4 of 6".
+    stages: list[dict] = field(default_factory=list)
+    line_stages: list[int] = field(default_factory=list)
 
     def summary(self) -> dict:
         return {
@@ -128,6 +133,8 @@ class _Writer:
         self.machine = machine
         self.lines: list[str] = []
         self.marks: list[float] = []
+        self.stages: list[dict] = []
+        self.line_stages: list[int] = []
         self.pos: Point | None = None
         self.burn_mm = 0.0
         self.travel_mm = 0.0
@@ -138,6 +145,15 @@ class _Writer:
     def raw(self, line: str) -> None:
         self.lines.append(line)
         self.marks.append(self.seconds)
+        self.line_stages.append(len(self.stages) - 1)
+
+    def begin_stage(self, layer: str, layer_no: int, layers: int, pass_no: int, passes: int) -> None:
+        """Start the next layer pass. From the second on, a `G4 P0` dwell comes first:
+        GRBL answers it only once the planner has emptied, so the app learns a pass has
+        begun when the previous one has actually finished, not when it was queued."""
+        self.stages.append({"layer": layer, "layer_no": layer_no, "layers": layers, "pass": pass_no, "passes": passes})
+        if len(self.stages) > 1:
+            self.raw("G4 P0")
 
     def _dist(self, x: float, y: float) -> float:
         if self.pos is None:
@@ -284,6 +300,7 @@ def _raster_gcode(
     bounds: Bounds,
     lo_x: float,
     hi_x: float,
+    stage: Callable[[int], None],
 ) -> None:
     rows, cols = power.shape
     raster = layer.raster
@@ -292,7 +309,8 @@ def _raster_gcode(
     feed = min(layer.speed, machine.max_feed)
     left, top = to_machine(raster.x, raster.y)
     forward = True
-    for _ in range(layer.passes):
+    for number in range(1, layer.passes + 1):
+        stage(number)
         # Front of the bed to the back: rows from the bottom of the image up.
         for row in range(rows - 1, -1, -1):
             line = power[row]
@@ -405,6 +423,7 @@ def build_job(job: JobSpec, machine: MachineProfile) -> GcodeResult:
     out.raw("M5")
     out.pos = None
     cursor: Point = (0.0, 0.0)
+    burning = [index for index, layer in enumerate(layers) if layer.mode == "line" or index in rasters]
     for index, layer in enumerate(layers):
         if layer.mode == "fill" and index not in rasters:
             warnings.append(f"{layer.name}: nothing dark enough to burn with these settings.")
@@ -416,6 +435,11 @@ def build_job(job: JobSpec, machine: MachineProfile) -> GcodeResult:
         if s <= 0:
             warnings.append(f"{layer.name}: power is 0, so this layer won't mark anything.")
         out.raw("M4 S0")
+        layer_no = burning.index(index) + 1
+
+        def stage(number: int, layer=layer, layer_no=layer_no) -> None:
+            out.begin_stage(layer.name, layer_no, len(burning), number, layer.passes)
+
         if layer.mode == "line":
             paths = []
             for path in layer.polylines:
@@ -423,7 +447,8 @@ def build_job(job: JobSpec, machine: MachineProfile) -> GcodeResult:
                 pts = simplify(_dedupe(pts))
                 if len(pts) >= 2:
                     paths.append(pts)
-            for _ in range(layer.passes):
+            for number in range(1, layer.passes + 1):
+                stage(number)
                 for path in order_paths(paths, out.pos or cursor):
                     out.rapid(*path[0])
                     bounds.add(*path[0])
@@ -431,7 +456,7 @@ def build_job(job: JobSpec, machine: MachineProfile) -> GcodeResult:
                         out.burn(x, y, s, feed)
                         bounds.add(x, y)
         else:
-            _raster_gcode(out, layer, rasters[index], machine, to_machine, bounds, lo_x, hi_x)
+            _raster_gcode(out, layer, rasters[index], machine, to_machine, bounds, lo_x, hi_x, stage)
         out.raw("M5")
         cursor = out.pos or cursor
     if bounds.empty:
@@ -448,6 +473,8 @@ def build_job(job: JobSpec, machine: MachineProfile) -> GcodeResult:
         travel_mm=out.travel_mm,
         warnings=warnings,
         line_seconds=out.marks,
+        stages=out.stages,
+        line_stages=out.line_stages,
     )
 
 

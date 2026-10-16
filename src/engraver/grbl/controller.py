@@ -40,6 +40,8 @@ class Job:
     error: str | None = None
     idle_reports: int = 0
     line_seconds: list[float] | None = None  # estimated time at the end of each line
+    stages: list[dict] | None = None  # one per layer pass, see gcode.GcodeResult
+    line_stages: list[int] | None = None  # index into `stages` for each line
 
     def progress(self) -> float:
         if self.state == "done":
@@ -50,6 +52,15 @@ class Job:
         if marks and marks[-1] > 0:
             return min(1.0, marks[min(self.acked, len(marks)) - 1] / marks[-1])
         return self.acked / len(self.lines)
+
+    def stage(self) -> dict | None:
+        """The layer pass being burned. A pass after the first opens with a dwell that
+        GRBL acknowledges only once the planner is empty, so the last acknowledged
+        line tells which pass the head is on."""
+        if not self.stages or not self.line_stages or self.state == "done":
+            return None
+        index = self.line_stages[min(self.acked, len(self.line_stages)) - 1] if self.acked else 0
+        return dict(self.stages[max(index, 0)])
 
     def public(self) -> dict:
         end = self.ended or time.time()
@@ -63,6 +74,7 @@ class Job:
             "elapsed": round(end - self.started, 1),
             "est_seconds": round(self.est_seconds, 1),
             "error": self.error,
+            "stage": self.stage(),
         }
 
 
@@ -221,12 +233,18 @@ class GrblController:
         kind: str = "job",
         est_seconds: float = 0.0,
         line_seconds: list[float] | None = None,
+        stages: list[dict] | None = None,
+        line_stages: list[int] | None = None,
     ) -> None:
         cleaned = [line.split(";")[0].strip() for line in lines]
         if line_seconds is not None and len(line_seconds) == len(lines):
             line_seconds = [mark for mark, text in zip(line_seconds, cleaned, strict=False) if text]
         else:
             line_seconds = None
+        if stages and line_stages is not None and len(line_stages) == len(lines):
+            line_stages = [mark for mark, text in zip(line_stages, cleaned, strict=False) if text]
+        else:
+            stages = line_stages = None
         lines = [text for text in cleaned if text]
         if not lines:
             raise MachineError("Nothing to send: the job is empty.")
@@ -239,7 +257,15 @@ class GrblController:
             too_long = next((text for text in lines if len(text) + 1 > self.rx_buffer), None)
             if too_long:
                 raise MachineError(f"G-code line too long for the controller: {too_long[:40]}…")
-            self.job = Job(lines=lines, name=name, kind=kind, est_seconds=est_seconds, line_seconds=line_seconds)
+            self.job = Job(
+                lines=lines,
+                name=name,
+                kind=kind,
+                est_seconds=est_seconds,
+                line_seconds=line_seconds,
+                stages=stages,
+                line_stages=line_stages,
+            )
             self._log("info", f"{name} started ({len(lines)} lines)")
 
     def pause(self) -> None:
