@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Engraver: a local app for the Atomstack A10</title>
+  <meta name="description" content="A local browser app for designing and running jobs on an Atomstack A10 or any GRBL diode laser. Material tests, a calibrated bed camera, and Claude Code over MCP. You always press start.">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='6' fill='%23e8590c'/%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%231f2328' stroke-width='3'/%3E%3C/svg%3E">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap top-row">
+    <a class="brand" href="#"><span class="dot" aria-hidden="true"></span>Engraver</a>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#claude">Claude</a>
+      <a href="#live">Live</a>
+      <a href="#start">Get started</a>
+      <a class="gh" href="https://github.com/allannapier/engraver">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<section class="hero wrap">
+  <div class="hero-text">
+    <p class="kicker">Open source · MIT · Runs on your computer</p>
+    <h1>Design it, test it, place it, burn it.</h1>
+    <p class="lede">A browser app for the Atomstack A10 and other GRBL diode lasers. A small Python server talks to the laser over USB. Claude Code can draw and set up jobs. Only you can start one.</p>
+    <p class="cta">
+      <a class="btn primary" href="#start">Get started</a>
+      <a class="btn" href="https://github.com/allannapier/engraver">View the code</a>
+    </p>
+  </div>
+  <figure class="shot hero-shot">
+    <a href="img/design.png"><img src="img/design.png" width="1440" height="900" alt="Engraver with a 90 mm coaster on the bed: a red cut circle around engraved mountains, with Engrave and Cut layers in the side panel"></a>
+    <figcaption>A coaster drawn by Claude Code: engraved mountains (fill layer) lined up inside a cut circle (line layer).</figcaption>
+  </figure>
+</section>
+
+<section class="glance wrap" aria-label="At a glance">
+  <div class="facts">
+  <div><strong>410 × 400</strong><span>mm bed, to scale</span></div>
+  <div><strong>115200</strong><span>baud GRBL over USB</span></div>
+  <div><strong>0</strong><span>API keys or cloud accounts</span></div>
+  <div><strong>1 click</strong><span>yours, to start any burn</span></div>
+  </div>
+</section>
+
+<section id="how" class="wrap">
+  <h2 class="section-title">How a job goes</h2>
+  <ol class="flow">
+    <li><b>Design</b>Import SVGs and pictures, add text and shapes.</li>
+    <li><b>Test</b>Burn a test card on scrap and keep the best square.</li>
+    <li><b>Place</b>See the real board on the canvas through a webcam.</li>
+    <li><b>Frame</b>Trace the outline with the laser off.</li>
+    <li><b>Burn</b>Check the summary and press Start burning.</li>
+  </ol>
+</section>
+
+<section class="feature wrap">
+  <div class="feature-text">
+    <h2>A canvas that is the bed</h2>
+    <p>The canvas is the bed in millimetres. Every design sits on a layer, and every layer has a mode, speed, power and passes.</p>
+    <ul>
+      <li><b>Line</b> layers trace outlines: score or cut.</li>
+      <li><b>Fill</b> layers scan back and forth: engrave, solid, dithered or with power varying by shade.</li>
+      <li>Move, scale, rotate, nudge, undo. Designs save in the app with a thumbnail.</li>
+    </ul>
+    <p class="note">Geometry is done in the browser: line layers are traced from the live SVG, fill layers rendered to a bitmap at the layer's line gap.</p>
+  </div>
+  <figure class="shot">
+    <a href="img/layers.png"><img src="img/layers.png" width="1060" height="780" loading="lazy" alt="Close-up of the canvas and the Design tab, with Engrave (fill) and Cut (line) layer settings"></a>
+  </figure>
+</section>
+
+<section class="feature flip wrap">
+  <div class="feature-text">
+    <h2>Settings from your machine, not a forum</h2>
+    <p>Built-in materials are only starting points for a 10 W diode. The test grid burns a labelled card of squares on scrap:</p>
+    <ul>
+      <li><b>Engrave</b> and <b>Score</b>: speed across, power down.</li>
+      <li><b>Cut</b>: speed against passes. The squares that drop out are cut through.</li>
+    </ul>
+    <p>Click the best square and it's saved to your own library as "picked from a test". Layers apply it from their Presets menu.</p>
+  </div>
+  <figure class="shot">
+    <a href="img/test-grid.png"><img src="img/test-grid.png" width="1440" height="900" loading="lazy" alt="Material test card for 3 mm plywood: 5 speeds by 5 powers, with the 4000 mm/min, 40 % square picked"></a>
+    <figcaption>Engrave card for 3 mm birch ply, 4000 mm/min at 40 % picked.</figcaption>
+  </figure>
+</section>
+
+<section class="feature wrap">
+  <div class="feature-text">
+    <h2>See the board before you burn</h2>
+    <p>A USB webcam over the bed puts a corrected photo under the canvas, so designs land on the material you actually have.</p>
+    <ol class="steps">
+      <li>Burn or draw four crosses at known spots.</li>
+      <li>Click each one in a picture from the camera.</li>
+      <li>The app fits a perspective correction from those four points.</li>
+    </ol>
+    <p class="note">Perspective only, no lens correction yet, so wide lenses are a few mm out near the edges. Photos are never saved.</p>
+  </div>
+  <div class="pair">
+    <figure class="shot">
+      <a href="img/calibrate.png"><img src="img/calibrate.png" width="1440" height="900" loading="lazy" alt="Calibrate the camera dialog with four marks picked on an angled view of the bed"></a>
+      <figcaption>Calibrate: click the four marks.</figcaption>
+    </figure>
+    <figure class="shot">
+      <a href="img/bed-photo.png"><img src="img/bed-photo.png" width="1440" height="900" loading="lazy" alt="The corrected bed photo on the canvas, with the coaster placed on a board"></a>
+      <figcaption>The corrected photo, with the coaster on the board.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="feature flip wrap">
+  <div class="feature-text">
+    <h2>Laser control that keeps its place</h2>
+    <ul>
+      <li><b>Jog</b> in 0.1 to 50 mm steps; <b>set origin</b> on the corner of your material.</li>
+      <li><b>Frame</b> traces the job's outline, laser off or at a 2 % dot.</li>
+      <li><b>Start</b> always shows size, time and layers first.</li>
+      <li><b>Stop</b> holds feed, waits for the head to halt, then resets. Position is kept.</li>
+    </ul>
+    <p class="note">Origin is GRBL's G54 offset (<code>G10 L20</code>), so it survives a power cycle. Jobs run in <code>M4</code> dynamic power, scaled by the controller's own <code>$30</code>.</p>
+  </div>
+  <figure class="shot">
+    <a href="img/running.png"><img src="img/running.png" width="1440" height="900" loading="lazy" alt="A job running: progress bar, Laser running status and head position in the top bar"></a>
+    <figcaption>A job running against the built-in simulator.</figcaption>
+  </figure>
+</section>
+
+<section id="claude" class="band">
+  <div class="wrap">
+    <h2 class="section-title">Claude Code drives. You press start.</h2>
+    <p class="band-lede">Engraver has no AI built in. While it runs, it's an MCP server, so Claude Code (or any MCP client) can work the app with your own subscription.</p>
+    <div class="cols">
+      <div class="card">
+        <h3>It can</h3>
+        <ul>
+          <li>Draw designs as SVG and line parts up across layers</li>
+          <li>Set layers from your tested materials</li>
+          <li>See the canvas, and a fresh photo of the bed</li>
+          <li>Connect, jog, set the origin, frame, pause and stop</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>It can't</h3>
+        <ul>
+          <li>Start or resume a job</li>
+          <li>Send console commands, home or unlock</li>
+          <li>Write to your material library</li>
+          <li>File bug reports</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Every change</h3>
+        <ul>
+          <li>Shows on your canvas as it happens</li>
+          <li>Is one undo step</li>
+          <li>Pops a note naming the client</li>
+          <li>Has its SVG sanitised first</li>
+        </ul>
+      </div>
+    </div>
+    <div class="pair wide">
+      <figure class="shot">
+        <a href="img/confirm.png"><img src="img/confirm.png" width="1440" height="900" loading="lazy" alt="Start burning? dialog marked: Claude Code set this job up. It only starts if you click Start burning."></a>
+        <figcaption><code>request_job_start</code> only opens this. Nothing burns until you click.</figcaption>
+      </figure>
+      <figure class="shot">
+        <a href="img/mcp-bed-photo.jpg"><img src="img/mcp-bed-photo.jpg" loading="lazy" alt="Bed photo as Claude sees it: the board with a yellow millimetre grid and the coaster drawn over it"></a>
+        <figcaption>What Claude sees from <code>get_bed_photo</code>: mm grid in machine coordinates, designs drawn over.</figcaption>
+      </figure>
+    </div>
+    <p class="prompt-eg">Try: <q>a 90 mm coaster with a mountain line drawing, engraved, with a cut circle around it</q></p>
+  </div>
+</section>
+
+<section class="wrap">
+  <h2 class="section-title">Under the hood</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 860 250" role="img" aria-labelledby="arch-t">
+      <title id="arch-t">Claude Code calls the server's MCP endpoint; canvas edits relay to the browser; the server streams G-code to the laser over USB</title>
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+      </defs>
+      <g class="box"><rect x="10" y="20" width="220" height="90" rx="10"/><text x="120" y="55">Browser</text><text class="s" x="120" y="80">canvas · geometry · camera</text></g>
+      <g class="box hot"><rect x="320" y="20" width="220" height="90" rx="10"/><text x="430" y="55">Python server</text><text class="s" x="430" y="80">127.0.0.1:8642 · G-code</text></g>
+      <g class="box"><rect x="630" y="20" width="220" height="90" rx="10"/><text x="740" y="55">Atomstack A10</text><text class="s" x="740" y="80">GRBL 1.1 · USB serial</text></g>
+      <g class="box ghost"><rect x="320" y="160" width="220" height="70" rx="10"/><text x="430" y="192">Claude Code</text><text class="s" x="430" y="214">MCP over HTTP</text></g>
+      <g class="ln">
+        <line x1="232" y1="55" x2="316" y2="55" marker-end="url(#ar)"/><line x1="316" y1="80" x2="232" y2="80" marker-end="url(#ar)"/>
+        <line x1="542" y1="65" x2="626" y2="65" marker-end="url(#ar)"/>
+        <line x1="430" y1="158" x2="430" y2="114" marker-end="url(#ar)"/>
+      </g>
+      <text class="l" x="274" y="46">job</text><text class="l" x="274" y="98">edits</text>
+      <text class="l" x="584" y="56">stream</text>
+      <text class="l" x="456" y="140">/mcp</text>
+    </svg>
+  </figure>
+  <ul class="grid-list">
+    <li><b>No build step.</b> FastAPI and pyserial on the server; plain ES modules in the page.</li>
+    <li><b>Character-counting streaming.</b> Fills GRBL's 128-byte buffer without overrunning it.</li>
+    <li><b>Loopback only.</b> Requests from other sites are refused by Host and Origin checks.</li>
+    <li><b>Simulator built in.</b> A fake GRBL to try everything without the laser. CI drives it in Chromium.</li>
+    <li><b>Bug reports you read first.</b> Diagnostics gathered, secrets scrubbed, full text shown before filing.</li>
+    <li><b>Tested.</b> pytest on Python 3.11 to 3.14 at 90 % coverage, plus a browser test with a fake camera.</li>
+  </ul>
+</section>
+
+<!--
+  Live from the workshop: webcam stills and clips of real burns.
+  To add one, put the file in docs/live/ and replace a .slot figure with:
+    <figure class="shot"><a href="live/NAME.jpg"><img src="live/NAME.jpg" loading="lazy" alt="..."></a><figcaption>...</figcaption></figure>
+  or, for a clip:
+    <figure class="shot"><video src="live/NAME.mp4" controls muted playsinline preload="metadata"></video><figcaption>...</figcaption></figure>
+  Remove the "coming soon" line once the first one is in.
+-->
+<section id="live" class="wrap">
+  <h2 class="section-title">Live from the workshop</h2>
+  <p class="soon">Coming soon: footage from the camera over the A10, shot by the app itself.</p>
+  <div class="live-grid">
+    <figure class="slot"><span>Calibration marks, burned</span></figure>
+    <figure class="slot"><span>Test card on birch ply</span></figure>
+    <figure class="slot"><span>Coaster, start to finish</span></figure>
+  </div>
+</section>
+
+<section id="start" class="wrap">
+  <h2 class="section-title">Get started</h2>
+  <div class="cols two">
+    <div>
+      <h3>Run it</h3>
+      <p>Needs <a href="https://docs.astral.sh/uv/">uv</a> and Python 3.11+. No laser? Pick <b>Simulator</b> as the port.</p>
+<pre><code>git clone https://github.com/allannapier/engraver
+cd engraver
+uv run engraver</code></pre>
+    </div>
+    <div>
+      <h3>Add it to Claude Code</h3>
+      <p>Keep Engraver open in your browser, then:</p>
+<pre><code>claude mcp add --transport http engraver \
+  http://127.0.0.1:8642/mcp</code></pre>
+      <p class="note">Setup → AI assistant shows this with a Copy button. Stdio-only clients can run <code>engraver-mcp</code>.</p>
+    </div>
+  </div>
+</section>
+
+<section class="wrap safety">
+  <h2>Safety</h2>
+  <p>A 10 W diode laser blinds and starts fires. Wear goggles rated for 455 nm, ventilate, and never leave a running job. Never laser PVC or vinyl: they release chlorine gas. The software comes with no warranty and replaces nothing about watching the machine.</p>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-row">
+    <span>MIT © 2026 Allan Napier</span>
+    <span>Screenshots: the app against its simulator, taken by <code>docs/screenshots.mjs</code></span>
+    <a href="https://github.com/allannapier/engraver">github.com/allannapier/engraver</a>
+  </div>
+</footer>
+
+<dialog id="zoom" aria-label="Screenshot"><img alt=""></dialog>
+<script>
+  // Click a screenshot to see it full size.
+  const zoom = document.getElementById("zoom");
+  const big = zoom.querySelector("img");
+  document.querySelectorAll(".shot a").forEach((a) => a.addEventListener("click", (e) => {
+    e.preventDefault();
+    big.src = a.href;
+    big.alt = a.querySelector("img").alt;
+    zoom.showModal();
+  }));
+  zoom.addEventListener("click", () => zoom.close());
+</script>
+</body>
+</html>
