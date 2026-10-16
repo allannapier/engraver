@@ -215,6 +215,39 @@ def test_state_and_picture_come_from_the_page(client):
     assert result["isError"]
 
 
+def test_bed_photo_comes_from_the_page(client):
+    tools = {t["name"]: t for t in rpc(client, "tools/list").json()["result"]["tools"]}
+    assert tools["get_bed_photo"]["annotations"]["readOnlyHint"]
+    rpc(client, "initialize", {"clientInfo": {"name": "Claude Code"}})
+    reply = {"image": "data:image/jpeg;base64,/9j/4A", "about": "Photo of the whole bed.", "text": "Took a photo."}
+    event, result = run_with_page(
+        client,
+        "get_bed_photo",
+        {"x_mm": 10, "y_mm": 20, "width_mm": 50, "height_mm": 40, "designs": False},
+        lambda e: {"ok": True, "result": reply},
+    )
+    assert event["action"] == "bed_photo"
+    assert event["args"] == {
+        "client": "Claude Code",
+        "x_mm": 10,
+        "y_mm": 20,
+        "width_mm": 50,
+        "height_mm": 40,
+        "designs": False,
+    }
+    assert result["content"] == [
+        {"type": "image", "data": "/9j/4A", "mimeType": "image/jpeg"},
+        {"type": "text", "text": "Photo of the whole bed."},
+    ]
+    # No camera set up: the page's explanation goes back as an error.
+    _, result = run_with_page(
+        client, "get_bed_photo", {}, lambda e: {"ok": False, "error": "Not done: Engraver has no calibrated camera."}
+    )
+    assert result["isError"] and "no calibrated camera" in body(result)
+    _, result = run_with_page(client, "get_bed_photo", {}, lambda e: {"ok": True, "result": {"image": "nope"}})
+    assert result["isError"] and "couldn't make the photo" in body(result)
+
+
 def test_a_page_that_never_answers_times_out(client):
     client.app_.state.mcp.bridge.timeout = 0.2
     _, result = run_with_page(client, "new_design", {}, lambda e: None)

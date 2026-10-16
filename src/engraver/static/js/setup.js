@@ -1,8 +1,9 @@
-// Setup tab: connecting an AI client over MCP, bug reports and the machine profile.
+// Setup tab: connecting an AI client over MCP, bug reports, the machine profile and the camera.
 
 import { state, on, emit } from "./store.js";
 import { api } from "./api.js";
 import { h, toast, act } from "./ui.js";
+import { cameraSection, initCameraSetup } from "./camerasetup.js";
 
 const panel = document.getElementById("tab-setup");
 let builtFor = "";
@@ -113,6 +114,7 @@ function build() {
       state.status.connected && h("p", { class: "note", style: "margin-top:10px" },
         `Connected: ${state.status.version || "GRBL"}. Full power is S${reported["30"] ?? "?"}, taken from the controller.`),
     ),
+    cameraSection(),
   );
 }
 
@@ -128,4 +130,7 @@ function render(force = false) {
 
 on("config", () => render(true));
 on("status", () => render(false));
-export const initSetup = () => render(true);
+export function initSetup() {
+  initCameraSetup();
+  render(true);
+}
