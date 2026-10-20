@@ -379,9 +379,26 @@ def create_app(
 
     # --- jobs ----------------------------------------------------------------
 
+    def with_origin(job: JobSpec, summary: dict) -> dict:
+        """Bed position measures from the origin. When one is set, say how far that moves
+        the job from where it sits on the canvas, so a leftover origin can't shift it unseen."""
+        ox, oy = controller.snapshot()["wco"]
+        if job.origin_mode != "absolute" or (abs(ox) < 0.05 and abs(oy) < 0.05):
+            return {**summary, "origin_offset": None}
+        parts = [
+            f"{abs(v):.1f} mm {(pos if v > 0 else neg)}"
+            for v, pos, neg in ((ox, "right", "left"), (oy, "back", "forward"))
+            if abs(v) >= 0.05
+        ]
+        warning = (
+            f"An origin is set, and Bed position measures from it: this burns {' and '.join(parts)} "
+            "of where it sits on the canvas. Clear the origin if that's not what you want."
+        )
+        return {**summary, "warnings": [*summary["warnings"], warning], "origin_offset": [ox, oy]}
+
     @app.post("/api/job/preview")
     def job_preview(body: JobBody):
-        return build_job(body.job, machine()).summary()
+        return with_origin(body.job, build_job(body.job, machine()).summary())
 
     @app.post("/api/job/gcode", response_class=PlainTextResponse)
     def job_gcode(body: JobBody):
@@ -402,7 +419,7 @@ def create_app(
             stages=result.stages,
             line_stages=result.line_stages,
         )
-        return result.summary()
+        return with_origin(body.job, result.summary())
 
     @app.post("/api/job/frame")
     def job_frame(body: FrameBody):
@@ -417,7 +434,7 @@ def create_app(
         travel = math.hypot(b.min_x, b.min_y) * trips
         est = perimeter / profile.frame_feed * 60 + travel / profile.travel_feed * 60 + 1
         controller.start(lines, name="Frame", kind="frame", est_seconds=est)
-        return result.summary()
+        return with_origin(body.job, result.summary())
 
     @app.post("/api/job/pause")
     def job_pause():
