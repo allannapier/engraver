@@ -130,6 +130,24 @@ export const shownPhoto = () => photo;
 
 const transformOf = (o) => `translate(${o.x + o.w / 2} ${o.y + o.h / 2}) rotate(${o.rot}) translate(${-o.w / 2} ${-o.h / 2})`;
 
+/**
+ * A picture on a threshold layer with its own cut-off is shown (and rasterised) as the black and white it will burn as:
+ * a luminance filter on the artwork, with the filter's defs inside the node so a serialised copy carries them.
+ */
+function showCutoff(node, o, layer) {
+  const on = o.kind === "image" && o.cutoff && layer?.mode === "fill" && layer.imageMode === "threshold";
+  node.art.querySelector(":scope > defs.cutoff")?.remove();
+  if (!on) return node.art.removeAttribute("filter");
+  const id = `cut-${o.id}`;
+  const defs = el("defs", { class: "cutoff" }, node.art);
+  const filter = el("filter", { id, x: 0, y: 0, width: 1, height: 1, "color-interpolation-filters": "sRGB" }, defs);
+  el("feColorMatrix", { type: "matrix", values: "0.299 0.587 0.114 0 0 0.299 0.587 0.114 0 0 0.299 0.587 0.114 0 0 0 0 0 1 0" }, filter);
+  const table = el("feComponentTransfer", {}, filter);
+  // Steep ramp: black below the cut-off, white above it, like the server's `pixel < threshold`.
+  for (const channel of ["R", "G", "B"]) el(`feFunc${channel}`, { type: "linear", slope: 1000, intercept: (-1000 * (o.cutoff - 0.5)) / 255 }, table);
+  node.art.setAttribute("filter", `url(#${id})`);
+}
+
 function drawObjects() {
   const seen = new Set();
   let previous = null;
@@ -149,6 +167,7 @@ function drawObjects() {
       node.svg = o.svg;
     }
     const layer = layerById(o.layerId);
+    showCutoff(node, o, layer);
     node.g.setAttribute("class", `obj mode-${layer?.mode || "line"}${layer?.output ? "" : " off"}`);
     node.g.style.setProperty("--layer", layer?.color || "#000");
     node.g.setAttribute("transform", transformOf(o));
