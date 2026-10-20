@@ -166,6 +166,8 @@ export async function applyAction(a, added = new Map()) {
   if (a.type === "transform_design") {
     const o = objectById(a.design_id);
     if (!o) throw new Error(NO_DESIGN);
+    // Check before changing anything, so a refused call leaves the design as it was.
+    if (num(a.cutoff) !== null && o.kind !== "image") throw new Error("Only pictures have a cutoff. Use set_layer's image_mode and the layer's threshold for other designs.");
     const cx = o.x + o.w / 2, cy = o.y + o.h / 2;
     const ratio = o.h / o.w;
     const w = num(a.width_mm), h2 = num(a.height_mm);
@@ -178,10 +180,7 @@ export async function applyAction(a, added = new Map()) {
     if (num(a.rotation_deg) !== null) o.rot = ((a.rotation_deg % 360) + 360) % 360;
     moveTo(o, num(a.x_mm), num(a.y_mm));
     if (a.layer_id && layerById(a.layer_id)) o.layerId = a.layer_id;
-    if (num(a.cutoff) !== null) {
-      if (o.kind !== "image") throw new Error("Only pictures have a cutoff. Use set_layer's image_mode and the layer's threshold for other designs.");
-      o.cutoff = clamp(Math.round(a.cutoff), 1, 255);
-    }
+    if (num(a.cutoff) !== null) o.cutoff = clamp(Math.round(a.cutoff), 1, 255);
     return `Adjusted "${o.name}"`;
   }
   if (a.type === "add_layer") {
