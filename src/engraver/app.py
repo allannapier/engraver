@@ -484,7 +484,9 @@ def create_app(
         await socket.accept()
         client: asyncio.Queue = asyncio.Queue(maxsize=400)
         hub.clients[client] = None
-        hub.activate(client)  # a new tab takes over, as before; focusing another tab hands it back
+        # A tab that reconnects after a restart mustn't take over from the one in use: a new tab
+        # claims control itself when it has focus. With no tab in control, the first one takes it.
+        hub.activate(client if hub.active not in hub.clients else hub.active)
         # Watch for the tab closing while waiting for events; otherwise this handler
         # would sit on the queue forever and keep the server from shutting down.
         closed = asyncio.ensure_future(_until_closed(socket, lambda: hub.activate(client)))

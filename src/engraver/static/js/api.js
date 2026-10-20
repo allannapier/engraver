@@ -45,6 +45,7 @@ export function connectEvents(onEvent, onLink) {
     socket.onopen = () => {
       retry = 500;
       onLink?.(true);
+      claim();
     };
     socket.onmessage = (msg) => {
       const event = JSON.parse(msg.data);
@@ -62,11 +63,11 @@ export function connectEvents(onEvent, onLink) {
       retry = Math.min(retry * 2, 5000);
     };
   };
-  open();
   // Tell the server which tab the person is using; MCP page actions go there.
   const claim = () => {
-    if (!document.hidden && socket?.readyState === WebSocket.OPEN) socket.send("active");
+    if (!document.hidden && document.hasFocus() && socket?.readyState === WebSocket.OPEN) socket.send("active");
   };
+  open();
   window.addEventListener("focus", claim);
   document.addEventListener("visibilitychange", claim);
 }
