@@ -440,6 +440,7 @@ class GrblController:
             self._thread = None
             job = self.job
             was_connected = self.connected or self.state == "Connecting"
+            self._abandon()  # nobody will answer a jog that's waiting now
             self._reset_state()
             if job and job.state in ("running", "paused", "stopping"):
                 job.state, job.error, job.ended = "error", "Connection lost", time.time()
