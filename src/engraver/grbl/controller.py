@@ -157,6 +157,10 @@ class GrblController:
         self.version = ""
         self.settings: dict[int, float] = {}
         self.alarm: str | None = None
+        self.home: list[float] | None = None  # machine position just after homing
+        self._homing = False  # $H acknowledged; record the position from the next idle report
+        self._jog_end: list[float] | None = None  # where queued jogs leave the head, until it is idle there
+        self._jog_idle = 0
         self.job: Job | None = None
         self._manual: deque[str] = deque()
         self._sent: deque[tuple[int, bool, str]] = deque()  # (bytes, is_job_line, text)
@@ -208,34 +212,70 @@ class GrblController:
             self._require_free()
             self._manual.append(line)
 
-    def jog(self, dx: float, dy: float, feed: float, wait: float | None = None) -> None:
-        """Queue a jog. With `wait`, block until GRBL answers it and raise if it refuses.
+    def travel(self) -> tuple[float, float] | None:
+        """The `$130`/`$131` travel in mm, once the controller has reported both."""
+        x, y = self.settings.get(130), self.settings.get(131)
+        return (x, y) if x and y else None
 
-        A garbled line (error 1 or 2, usually serial noise) is sent once more.
+    def limits(self) -> list[tuple[float, float]] | None:
+        """Where the head can go, per axis in machine mm, once it has been homed this session.
+
+        Measured from where homing left the head, so it holds whichever way the firmware
+        numbers machine space: travel runs away from the home switch ($23 bit set means
+        the axis homes towards negative), less the pull-off ($27) already used up.
         """
-        if dx == 0 and dy == 0:
-            return
+        travel = self.travel()
+        if self.home is None or not travel:
+            return None
+        mask, pulloff = int(self.settings.get(23, 0)), self.settings.get(27, 0.0)
+        out = []
+        for i in range(2):
+            reach = max(0.0, travel[i] - pulloff)
+            here = self.home[i]
+            out.append((here, here + reach) if mask & (1 << i) else (here - reach, here))
+        return out
+
+    def jog(self, dx: float, dy: float, feed: float, wait: float | None = None) -> tuple[float, float]:
+        """Queue a jog and return the distance actually asked for.
+
+        Once homed, a jog that would run past the travel is shortened to stop at the end
+        (a hard limit would alarm and lose position). With `wait`, block until GRBL answers
+        and raise if it refuses. A garbled line (error 1 or 2, usually serial noise) is sent once more.
+        """
         for attempt in range(2 if wait else 1):
-            line = _Tracked(f"$J=G91 G21 X{dx:.3f} Y{dy:.3f} F{feed:.0f}")
             with self._lock:
                 self._require_free()
                 if self.state not in ("Idle", "Jog"):
                     raise MachineError(f"Can't move while the machine is {self.state.lower()}.")
+                # Clicks can come faster than status reports: limit from where earlier jogs end.
+                start = self._jog_end or self.mpos
+                if limits := self.limits():
+                    dx, dy = (
+                        min(max(start[i] + d, lo), hi) - start[i]
+                        for i, (d, (lo, hi)) in enumerate(zip((dx, dy), limits, strict=True))
+                    )
+                if abs(dx) < 0.001 and abs(dy) < 0.001:
+                    return (0.0, 0.0)
+                line = _Tracked(f"$J=G91 G21 X{dx:.3f} Y{dy:.3f} F{feed:.0f}")
                 self._manual.append(line)
+                self._jog_end, self._jog_idle = [start[0] + dx, start[1] + dy], 0
             if not wait:
-                return
+                return (dx, dy)
             if not line.done.wait(wait):
                 raise MachineError("The machine didn't answer the jog. Check the connection and try again.")
             if line.error is None:
-                return
+                return (dx, dy)
             if line.error in (1, 2) and attempt == 0:
                 continue
             if line.error == 0:
                 raise MachineError("The jog was cancelled by a stop or a reset.")
             raise MachineError(f"The machine refused the jog: {p.error_text(line.error)}.")
+        return (dx, dy)
 
     def jog_cancel(self) -> None:
         self._write(p.JOG_CANCEL)
+        with self._lock:
+            self._jog_end = None  # stopped short; status reports say where
 
     def set_origin(self) -> None:
         """Make the current head position work X0 Y0 (stored in G54, survives a stop)."""
@@ -337,6 +377,7 @@ class GrblController:
                 "power": self.power,
                 "version": self.version,
                 "alarm": self.alarm,
+                "homed": self.home is not None,
                 "settings": {str(k): v for k, v in self.settings.items()},
                 "job": self.job.public() if self.job else None,
             }
@@ -535,6 +576,7 @@ class GrblController:
         elif text.startswith("ALARM:"):
             self.alarm = p.alarm_text(_int(text[6:]))
             self.state = "Alarm"
+            self.home, self._homing, self._jog_end = None, False, None  # position may be lost: home again
             self._log("error", f"Alarm: {self.alarm}")
             if self.job and self.job.state in ("running", "paused", "stopping"):
                 self.job.state, self.job.error, self.job.ended = "error", f"Alarm: {self.alarm}", time.time()
@@ -581,6 +623,11 @@ class GrblController:
                 self._begin_halt("error", f"{p.error_text(error)} (line {job.acked}: {text})")
         elif error is not None:
             self._log("error", f"{text} → {p.error_text(error)}")
+        elif text.upper() == "$H":
+            # Homing has finished (GRBL answers $H only then); this status report or the next
+            # shows where it left the head.
+            self._homing = True
+            self._log("rx", "ok")
         elif text not in ("$I", "$$"):
             self._log("rx", "ok")
         if not is_job and isinstance(text, _Tracked):
@@ -605,12 +652,25 @@ class GrblController:
         self.substate = status.get("substate")
         if self.state != "Alarm":
             self.alarm = None
+        else:
+            self.home, self._homing = None, False  # locked from power-on, or a missed ALARM line
         if "wco" in status:
             self.wco = status["wco"][:2]
         if "mpos" in status:
             self.mpos = status["mpos"][:2]
         elif "wpos" in status:
             self.mpos = [status["wpos"][i] + self.wco[i] for i in range(2)]
+        if self._jog_end is not None:
+            # Two idle reports with no jog waiting: the jogs are done (the first may predate them).
+            queued = any(isinstance(t, _Tracked) for t in self._manual) or any(
+                isinstance(t, _Tracked) for _, _, t in self._sent
+            )
+            self._jog_idle = self._jog_idle + 1 if self.state == "Idle" and not queued else 0
+            if self._jog_idle >= 2 or self.state not in ("Idle", "Jog"):
+                self._jog_end = None
+        if self._homing and self.state == "Idle":
+            self._homing = False
+            self.home = list(self.mpos)
         self.feed = status.get("feed", self.feed)
         self.power = status.get("power", self.power)
         if self._halt:

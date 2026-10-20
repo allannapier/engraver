@@ -2,7 +2,7 @@
 
 import { state, on, saveUi } from "./store.js";
 import { post } from "./api.js";
-import { h, icon, act, fill } from "./ui.js";
+import { h, icon, act, fill, toast } from "./ui.js";
 
 const panel = document.getElementById("tab-laser");
 const logLines = [];
@@ -23,7 +23,10 @@ export function addLog(entry) {
   }
 }
 
-const jog = (dx, dy) => act(() => post("/api/jog", { dx: dx * state.ui.jogStep, dy: dy * state.ui.jogStep }));
+const jog = (dx, dy) => act(async () => {
+  const moved = await post("/api/jog", { dx: dx * state.ui.jogStep, dy: dy * state.ui.jogStep });
+  if (moved.limited) toast(moved.dx || moved.dy ? "Stopped at the end of the machine's travel." : "The head is already at the end of the machine's travel.", "warn");
+});
 
 function seg(options, current, onPick) {
   return h("div", { class: "seg" },
