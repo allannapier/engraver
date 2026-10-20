@@ -47,6 +47,9 @@ const ICONS = {
   left: "M19 12H5m0 0 6-6m-6 6 6 6",
   right: "M5 12h14m0 0-6-6m6 6-6 6",
   close: "M6 6l12 12M18 6 6 18",
+  material: "M4 6h16v12H4zM8 10h8v4H8z",
+  "center-material": "M3 5h18v14H3zM12 8v8M8 12h8",
+  "fit-material": "M3 5h18v14H3zM7 9V7h2M15 7h2v2M17 15v2h-2M9 17H7v-2",
   camera: "M4 8h3l2-3h6l2 3h3v11H4zM12 10.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7z",
 };
 

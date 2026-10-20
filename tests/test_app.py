@@ -294,3 +294,14 @@ def test_frame_estimate_counts_the_trip_there_and_back(client):
     est = wait_for(client, lambda s: s["job"]["state"] == "running")["job"]["est_seconds"]
     assert 5.5 < est < 7
     client.post("/api/job/stop")
+
+
+def test_material_areas(client):
+    area = {"id": "my-area1", "name": "Board", "x": 30, "y": 112, "w": 305, "h": 155}
+    r = client.put("/api/config", json={"areas": [area]})
+    assert r.json()["config"]["areas"] == [area]
+    # Other settings leave the areas alone.
+    client.put("/api/config", json={"machine": {"jog_feed": 1500}})
+    assert client.get("/api/state").json()["config"]["areas"] == [area]
+    assert client.put("/api/config", json={"areas": [{**area, "w": 0}]}).status_code == 422
+    assert client.put("/api/config", json={"areas": []}).json()["config"]["areas"] == []

@@ -55,13 +55,13 @@ export const state = {
   doc: defaultDoc(),
   selection: new Set(),
   status: { connected: false, state: "Disconnected", wpos: [0, 0], wco: [0, 0], settings: {}, job: null },
-  config: { machine: {}, bugs: {} },
+  config: { machine: {}, bugs: {}, areas: [] },
   machine: { bed_w: 410, bed_h: 400, max_feed: 6000 },
   materials: [], // what the Material box offers: the person's own first, then the built-in starting points
   builtin: [],
   library: [],
   never: [],
-  ui: { materialId: "", originMode: "absolute", finish: "origin", frameDot: false, jogStep: 10, lockAspect: true },
+  ui: { materialId: "", originMode: "absolute", finish: "origin", frameDot: false, jogStep: 10, areaId: "", lockAspect: true },
 };
 
 export function setMaterials({ builtin, library }) {

@@ -14,6 +14,7 @@ import { initLaser, addLog } from "./laser.js";
 import { initSetup } from "./setup.js";
 import { initBugReport } from "./bugreport.js";
 import { initDesigns, cleanProject, saveDesign } from "./designs.js";
+import { centreOnMaterial, fitToMaterial, areaDialog } from "./materialarea.js";
 import { handleMcp } from "./mcp.js";
 import { initBedPhoto, takePhoto } from "./bedphoto.js";
 
@@ -153,6 +154,9 @@ const TOOLS = {
     for (const o of picked) { o.x += dx; o.y += dy; }
     commit();
   },
+  "center-material": centreOnMaterial,
+  "fit-material": fitToMaterial,
+  material: areaDialog,
   "zoom-in": () => zoomBy(1.3),
   "zoom-out": () => zoomBy(1 / 1.3),
   fit: fitView,
@@ -173,6 +177,8 @@ function initTools() {
     set("duplicate", any);
     set("delete", any);
     set("center", any);
+    set("center-material", state.doc.objects.length > 0 && state.config.areas?.length > 0);
+    set("fit-material", state.doc.objects.length > 0 && state.config.areas?.length > 0);
     $("stage-hint").textContent = state.doc.objects.length
       ? "Scroll to zoom. Hold Space and drag to pan."
       : "Import an SVG or picture, add text or a shape, or ask Claude Code for one over MCP.";
