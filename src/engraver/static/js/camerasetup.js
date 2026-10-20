@@ -183,8 +183,16 @@ async function calibrate() {
 // Built once and kept: the preview keeps playing while the rest of the section redraws.
 const picker = h("select", {
   onchange: act(async (event) => {
-    const picked = cameras.find((c) => c.id === event.target.value);
+    const index = event.target.selectedIndex - 1; // the first option is "Any camera"
     stopPreviewUi();
+    if (index >= 0 && !cameras[index]?.id) {
+      // Until the browser has been allowed to use a camera every device ID is empty, so the
+      // choice can't be told apart. Ask for permission, then look the list up again.
+      await openCamera("");
+      closeCamera();
+      await refreshCameras();
+    }
+    const picked = cameras[index];
     // A different camera sees the bed differently: its calibration starts again.
     await saveCamera({ device_id: picked?.id || "", label: picked?.label || "", points: [] });
   }),
