@@ -94,7 +94,9 @@ function build() {
       h("label", { class: "field" }, "Baud rate", num("baud")),
     ),
     travelDiffers && h("div", { class: "row spread", style: "margin-top:10px" },
-      h("p", { class: "note" }, `The controller reports ${travel[0]} × ${travel[1]} mm of travel.`),
+      travel[0] < machine.bed_w - 0.5 || travel[1] < machine.bed_h - 0.5
+        ? h("p", { class: "note warn" }, `The controller reports ${travel[0]} × ${travel[1]} mm of travel, less than this bed: the head can't reach the whole canvas, and going past the end trips a limit switch.`)
+        : h("p", { class: "note" }, `The controller reports ${travel[0]} × ${travel[1]} mm of travel.`),
       h("button", {
         type: "button", class: "btn small",
         onclick: act(async () => {

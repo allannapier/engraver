@@ -140,7 +140,7 @@ async function calibrate() {
           }, "Go to this point"),
           h("button", {
             type: "button", class: "btn small ghost", disabled: !ready() || !Number.isFinite(p.x) || !Number.isFinite(p.y),
-            title: "Move the head here and show a faint 2 % dot for a second",
+            title: "Move the head here and turn the beam on at 2 % for a second. Goggles on.",
             onclick: act(() => post("/api/goto", { x: p.x, y: p.y, dot: true })),
           }, "Go with dot")),
       ]));
@@ -177,6 +177,7 @@ async function calibrate() {
     wrap,
     message,
     rows,
+    h("p", { class: "note warn" }, "Go with dot turns the beam on at 2 % for a second while the head is still. Wear your goggles; it can mark paper and dark surfaces."),
     h("div", { class: "actions spread" },
       h("button", {
         type: "button", class: "btn ghost",

@@ -34,6 +34,8 @@ from .saved import NotFound, SavedError, Shelf, designs_folder, new_id
 STATIC_DIR = Path(__file__).parent / "static"
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 SIM_PORT = "sim"
+JOG_ACK_SECONDS = 3.0  # how long a jog waits for GRBL to answer
+JOG_MOVE_SECONDS = 15.0  # how long the MCP jog tool waits for the move to finish
 
 
 class Hub:
@@ -334,8 +336,14 @@ def create_app(
 
     @app.post("/api/jog")
     def jog(body: JogBody):
-        controller.jog(body.dx, body.dy, body.feed or store.settings.machine.jog_feed)
-        return {"ok": True}
+        dx, dy = controller.jog(body.dx, body.dy, body.feed or store.settings.machine.jog_feed, wait=JOG_ACK_SECONDS)
+        # Shortened to stop at the end of the travel, so the head doesn't hit a limit switch.
+        return {
+            "ok": True,
+            "dx": round(dx, 3),
+            "dy": round(dy, 3),
+            "limited": abs(dx - body.dx) + abs(dy - body.dy) > 0.001,
+        }
 
     @app.post("/api/jog/cancel")
     def jog_cancel():
@@ -370,17 +378,47 @@ def create_app(
 
     @app.post("/api/job/preview")
     def job_preview(body: JobBody):
-        return build_job(body.job, machine()).summary()
+        result = build_job(body.job, machine())
+        check_travel(result)
+        return result.summary()
 
     @app.post("/api/job/gcode", response_class=PlainTextResponse)
     def job_gcode(body: JobBody):
         result = build_job(body.job, machine())
         return "\n".join(result.lines) + "\n"
 
+    def check_travel(result) -> None:
+        """Refuse a job or frame that would run past the machine's travel and trip a hard limit.
+
+        Only once the machine has been homed: before that its position means nothing. The
+        job's G-code is in work coordinates, so the origin offset is added in either mode.
+        """
+        limits = controller.limits()
+        if not limits:
+            return
+        b = result.bounds
+        ox, oy = controller.snapshot()["wco"]
+        (x_lo, x_hi), (y_lo, y_hi) = limits
+        over = {
+            "left": x_lo - (ox + b.min_x),
+            "right": ox + b.max_x - x_hi,
+            "front": y_lo - (oy + b.min_y),
+            "back": oy + b.max_y - y_hi,
+        }
+        sides = [
+            f"{side} by {amount:.0f} mm" if amount >= 1 else side for side, amount in over.items() if amount > 0.01
+        ]
+        if sides:
+            raise JobError(
+                f"The job would run past the end of the machine's travel ({', '.join(sides)}) and trip a limit switch. "
+                "Move the design, or the origin."
+            )
+
     @app.post("/api/job/start")
     def job_start(body: JobBody):
         require_laser_mode()
         result = build_job(body.job, machine())
+        check_travel(result)
         app.state.last_job = bugs.describe_job(body.job, result, "job")
         controller.start(
             result.lines,
@@ -397,6 +435,7 @@ def create_app(
     def job_frame(body: FrameBody):
         profile = machine()
         result = build_job(body.job, profile)
+        check_travel(result)
         lines = frame_gcode(result.bounds, profile, dot_power=body.dot_power, finish=body.job.finish)
         app.state.last_job = {**bugs.describe_job(body.job, result, "frame"), "frame_gcode": lines}
         b = result.bounds
@@ -509,6 +548,13 @@ def create_app(
             },
             "bed_mm": [machine().bed_w, machine().bed_h],
         }
+        travel = [settings.get("130"), settings.get("131")]
+        if all(travel) and (travel[0] < machine().bed_w - 0.5 or travel[1] < machine().bed_h - 0.5):
+            state["travel_mismatch"] = (
+                f"The machine reports {travel[0]:.0f} × {travel[1]:.0f} mm of travel ($130/$131), less than the "
+                f"{machine().bed_w:.0f} × {machine().bed_h:.0f} mm bed. Keep designs and jogs inside the travel, "
+                "and ask the person to fix the bed size in the Setup tab (Use this)."
+            )
         if not status["connected"]:
             state["ports"] = ports_list()
         return state
@@ -533,8 +579,20 @@ def create_app(
     @tool
     def jog_tool(args: dict) -> dict:
         body = JogBody(dx=args.get("dx_mm", 0), dy=args.get("dy_mm", 0), feed=args.get("feed"))
-        jog(body)
-        return {"text": f"Jogging {body.dx:g}, {body.dy:g} mm.", "note": f"moved the head {body.dx:g}, {body.dy:g} mm"}
+        moved = jog(body)
+        # Status reports lag the ack a little, so give the move a moment to show up before waiting it out.
+        start = time.monotonic()
+        while time.monotonic() - start < JOG_MOVE_SECONDS:
+            if controller.state != "Jog" and time.monotonic() - start > 0.4:
+                break
+            time.sleep(0.05)
+        wpos = controller.snapshot()["wpos"]
+        dx, dy = moved["dx"], moved["dy"]
+        limited = " That's as far as it goes: the end of the machine's travel." if moved["limited"] else ""
+        return {
+            "text": f"Moved {dx:g}, {dy:g} mm. The head is at X{wpos[0]:g} Y{wpos[1]:g} mm.{limited}",
+            "note": f"moved the head {dx:g}, {dy:g} mm",
+        }
 
     @tool
     def origin_tool(args: dict) -> dict:
