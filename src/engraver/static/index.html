@@ -45,6 +45,9 @@
       <button data-tool="delete" title="Delete (Del)"></button>
       <hr>
       <button data-tool="center" title="Centre on the bed"></button>
+      <button data-tool="center-material" title="Centre on material"></button>
+      <button data-tool="fit-material" title="Fit to material"></button>
+      <button data-tool="material" title="Material area"></button>
       <button data-tool="zoom-in" title="Zoom in"></button>
       <button data-tool="zoom-out" title="Zoom out"></button>
       <button data-tool="fit" title="Show the whole bed"></button>
@@ -62,6 +65,7 @@
           <label>H <input id="prop-h" type="number" step="0.1" min="0.1"></label>
           <label>Angle <input id="prop-rot" type="number" step="1"></label>
           <label>Layer <select id="prop-layer"></select></label>
+          <label id="prop-cutoff-wrap" hidden title="Pixels darker than this burn. The picture shows what will burn.">Cut-off <input id="prop-cutoff" style="width:80px" type="range" min="1" max="255" step="1"> <output id="prop-cutoff-value"></output></label>
           <button id="prop-edit-text" class="btn" hidden>Edit text</button>
           <span class="prop-unit">mm from the front-left corner</span>
         </div>

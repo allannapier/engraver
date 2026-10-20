@@ -152,6 +152,8 @@ input[type="checkbox"] { accent-color: var(--diode-strong); width: 16px; height:
 .rot-stem { stroke: var(--diode-strong); vector-effect: non-scaling-stroke; stroke-width: 1.5px; }
 .marquee { fill: rgb(63 115 245 / .12); stroke: var(--diode-strong); vector-effect: non-scaling-stroke; stroke-width: 1px; }
 .job-frame { fill: none; stroke: #8a4a0c; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; stroke-width: 1.5px; pointer-events: none; }
+.material-area { fill: rgba(40, 120, 60, 0.08); stroke: #2c7a3f; stroke-width: 1.5px; vector-effect: non-scaling-stroke; pointer-events: none; }
+.material-label { fill: #2c7a3f; font-family: var(--num); pointer-events: none; }
 .job-label { fill: #8a4a0c; font-family: var(--num); pointer-events: none; }
 .origin-mark { stroke: #8a4a0c; fill: none; vector-effect: non-scaling-stroke; stroke-width: 1.5px; pointer-events: none; }
 .head { pointer-events: none; }
@@ -315,3 +317,5 @@ dialog .actions.spread > :last-child { margin-left: auto; }
 .calib-points input { width: 100%; }
 .calib-points .done { color: var(--ok); }
 dialog.wide:has(.calib) { width: min(980px, calc(100vw - 32px)); }
+
+.tab-banner { position: sticky; top: 0; z-index: 50; padding: 6px 12px; text-align: center; background: #b45309; color: #fff; font-size: 13px; cursor: pointer; }

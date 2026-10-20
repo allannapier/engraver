@@ -80,7 +80,10 @@ function addMarks(points) {
 
 function pointsOrDefaults() {
   const saved = cameraSettings().points || [];
-  return saved.length === 4 ? saved.map((p) => ({ ...p })) : defaultMarks().map((p) => ({ ...p, u: null, v: null }));
+  // Keep the bed positions from last time, but not where they were in the picture: the
+  // camera may have moved, and a mark that isn't clicked again would keep its old spot.
+  const marks = saved.length === 4 ? saved : defaultMarks();
+  return marks.map(({ x, y }) => ({ x, y, u: null, v: null }));
 }
 
 async function calibrate() {
@@ -211,8 +214,16 @@ async function calibrate() {
 // Built once and kept: the preview keeps playing while the rest of the section redraws.
 const picker = h("select", {
   onchange: act(async (event) => {
-    const picked = cameras.find((c) => c.id === event.target.value);
+    const index = event.target.selectedIndex - 1; // the first option is "Any camera"
     stopPreviewUi();
+    if (index >= 0 && !cameras[index]?.id) {
+      // Until the browser has been allowed to use a camera every device ID is empty, so the
+      // choice can't be told apart. Ask for permission, then look the list up again.
+      await openCamera("");
+      closeCamera();
+      await refreshCameras();
+    }
+    const picked = cameras[index];
     // A different camera sees the bed differently: its calibration starts again.
     await saveCamera({ device_id: picked?.id || "", label: picked?.label || "", points: [] });
   }),

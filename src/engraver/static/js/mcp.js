@@ -110,7 +110,8 @@ const actions = {
     if (!machineReady()) throw new Error("The machine isn't ready: connect it and wait until it's idle.");
     const { job } = await buildJob("Job");
     const summary = await frame(job);
-    return { text: `Framing ${summary.width} × ${summary.height} mm${state.ui.frameDot ? " with a 2% dot" : " with the laser off"}.` };
+    const text = `Framing ${summary.width} × ${summary.height} mm${state.ui.frameDot ? " with a 2% dot" : " with the laser off"}.`;
+    return { text: summary.origin_offset ? `${text} ${summary.warnings.at(-1)}` : text };
   },
   request_job_start: async ({ client }) => {
     busyCheck();

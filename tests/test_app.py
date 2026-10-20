@@ -339,3 +339,76 @@ def test_goto_stays_inside_the_travel_once_homed(client):
     r = client.post("/api/goto", json={"x": 350, "y": 20})
     assert r.status_code == 409 and "travel" in r.json()["detail"]
     assert client.post("/api/goto", json={"x": 300, "y": 20}).status_code == 200
+
+
+def test_material_areas(client):
+    area = {"id": "my-area1", "name": "Board", "x": 30, "y": 112, "w": 305, "h": 155}
+    r = client.put("/api/config", json={"areas": [area]})
+    assert r.json()["config"]["areas"] == [area]
+    # Other settings leave the areas alone.
+    client.put("/api/config", json={"machine": {"jog_feed": 1500}})
+    assert client.get("/api/state").json()["config"]["areas"] == [area]
+    assert client.put("/api/config", json={"areas": [{**area, "w": 0}]}).status_code == 422
+    assert client.put("/api/config", json={"areas": []}).json()["config"]["areas"] == []
+
+
+def test_a_set_origin_is_flagged_on_bed_position_jobs(client):
+    connect(client)
+    summary = client.post("/api/job/preview", json={"job": SQUARE}).json()
+    assert summary["origin_offset"] is None and not summary["warnings"]
+    client.post("/api/jog", json={"dx": 40, "dy": 15})
+    wait_for(client, lambda s: s["state"] == "Idle" and s["wpos"] == [40, 15])
+    client.post("/api/origin/set")
+    wait_for(client, lambda s: s["wco"] == [40, 15])
+    summary = client.post("/api/job/preview", json={"job": SQUARE}).json()
+    assert summary["origin_offset"] == [40, 15]
+    assert "40.0 mm right and 15.0 mm back" in summary["warnings"][-1]
+    # From the origin, the origin is the point: nothing to warn about.
+    summary = client.post("/api/job/preview", json={"job": {**SQUARE, "origin_mode": "origin"}}).json()
+    assert summary["origin_offset"] is None and not summary["warnings"]
+    frame = client.post("/api/job/frame", json={"job": SQUARE}).json()
+    assert frame["origin_offset"] == [40, 15]
+    wait_for(client, lambda s: s["job"]["state"] == "done")
+    client.post("/api/origin/clear")
+    wait_for(client, lambda s: s["wco"] == [0, 0])
+    assert client.post("/api/job/preview", json={"job": SQUARE}).json()["origin_offset"] is None
+
+
+def test_page_actions_go_to_the_active_tab():
+    import asyncio
+
+    from engraver.app import Hub
+
+    hub = Hub()
+    old, new = asyncio.Queue(), asyncio.Queue()
+    hub.clients[old] = None
+    hub.clients[new] = None
+    hub.activate(new)
+    assert hub.send_to_page({"type": "mcp"}) and new.qsize() == 2 and old.qsize() == 1
+    hub.activate(old)
+    assert hub.send_to_page({"type": "mcp"})
+    kinds = []
+    while not old.empty():
+        kinds.append(old.get_nowait())
+    assert kinds[-2:] == [{"type": "control", "active": True, "tabs": 2}, {"type": "mcp"}]
+
+
+def test_a_reconnecting_tab_does_not_take_control(client):
+    hub = client.app.state.hub
+
+    def settle(predicate):
+        deadline = time.monotonic() + 3
+        while not predicate() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert predicate()
+
+    with client.websocket_connect("/ws"), client.websocket_connect("/ws") as second:
+        settle(lambda: len(hub.clients) == 2)
+        first_tab = next(iter(hub.clients))
+        assert hub.active is first_tab  # nobody was in control: the first tab took it
+        second.send_text("active")  # the person clicks into the second tab
+        settle(lambda: hub.active is not first_tab)
+        in_use = hub.active
+        with client.websocket_connect("/ws"):  # a background tab reconnecting
+            settle(lambda: len(hub.clients) == 3)
+            assert hub.active is in_use
