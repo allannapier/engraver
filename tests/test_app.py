@@ -316,3 +316,43 @@ def test_a_set_origin_is_flagged_on_bed_position_jobs(client):
     client.post("/api/origin/clear")
     wait_for(client, lambda s: s["wco"] == [0, 0])
     assert client.post("/api/job/preview", json={"job": SQUARE}).json()["origin_offset"] is None
+
+
+def test_page_actions_go_to_the_active_tab():
+    import asyncio
+
+    from engraver.app import Hub
+
+    hub = Hub()
+    old, new = asyncio.Queue(), asyncio.Queue()
+    hub.clients[old] = None
+    hub.clients[new] = None
+    hub.activate(new)
+    assert hub.send_to_page({"type": "mcp"}) and new.qsize() == 2 and old.qsize() == 1
+    hub.activate(old)
+    assert hub.send_to_page({"type": "mcp"})
+    kinds = []
+    while not old.empty():
+        kinds.append(old.get_nowait())
+    assert kinds[-2:] == [{"type": "control", "active": True, "tabs": 2}, {"type": "mcp"}]
+
+
+def test_a_reconnecting_tab_does_not_take_control(client):
+    hub = client.app.state.hub
+
+    def settle(predicate):
+        deadline = time.monotonic() + 3
+        while not predicate() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert predicate()
+
+    with client.websocket_connect("/ws"), client.websocket_connect("/ws") as second:
+        settle(lambda: len(hub.clients) == 2)
+        first_tab = next(iter(hub.clients))
+        assert hub.active is first_tab  # nobody was in control: the first tab took it
+        second.send_text("active")  # the person clicks into the second tab
+        settle(lambda: hub.active is not first_tab)
+        in_use = hub.active
+        with client.websocket_connect("/ws"):  # a background tab reconnecting
+            settle(lambda: len(hub.clients) == 3)
+            assert hub.active is in_use

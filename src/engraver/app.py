@@ -7,6 +7,7 @@ on another site can't call the API and drive the laser.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import math
 import os
 import time
@@ -43,6 +44,16 @@ class Hub:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.clients: dict[asyncio.Queue, None] = {}  # in the order the tabs connected
         self.log: deque[dict] = deque(maxlen=300)
+        self.active: asyncio.Queue | None = None  # the tab the person last used
+
+    def activate(self, client: asyncio.Queue | None) -> None:
+        """Make this tab the one MCP page actions go to, and tell every tab whether it is."""
+        self.active = client
+        for other in self.clients:
+            try:
+                other.put_nowait({"type": "control", "active": other is client, "tabs": len(self.clients)})
+            except asyncio.QueueFull:
+                pass
 
     def publish(self, event: dict) -> None:
         """Called from the controller's IO thread."""
@@ -62,8 +73,11 @@ class Hub:
                 pass
 
     def send_to_page(self, event: dict) -> bool:
-        """Give an event to one tab only, the most recently opened: for work only one tab should do."""
-        for client in reversed(self.clients):
+        """Give an event to one tab only, the one last used (else the newest): for work only one tab should do."""
+        order = list(reversed(self.clients))
+        if self.active in self.clients:
+            order.insert(0, self.active)
+        for client in order:
             try:
                 client.put_nowait(event)
                 return True
@@ -124,12 +138,23 @@ def _host_ok(headers, allowed: set[str]) -> bool:
     return origin != "null"
 
 
-async def _until_closed(socket: WebSocket) -> None:
+async def _until_closed(socket: WebSocket, on_active) -> None:
     try:
         while True:
-            await socket.receive_text()  # the page never sends; this returns only on close
+            if await socket.receive_text() == "active":  # the page says so when it gains focus
+                on_active()
     except (WebSocketDisconnect, RuntimeError):
         pass
+
+
+def _build_id() -> str:
+    """Changes whenever the page's files do, so a tab running older code can tell."""
+    digest = hashlib.sha256()
+    for path in sorted(STATIC_DIR.rglob("*")):
+        if path.is_file():
+            digest.update(path.relative_to(STATIC_DIR).as_posix().encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
 
 
 def create_app(
@@ -139,6 +164,7 @@ def create_app(
     library = MaterialLibrary(library_path(store.path))
     designs = Shelf(designs_folder(store.path), noun="design", max_items=500, max_bytes=40_000_000)
     hub = Hub()
+    build = _build_id()
     controller = GrblController(on_event=hub.publish)
     allowed_hosts = LOCAL_HOSTS | set(extra_hosts)
     if sim_speed is None:
@@ -475,11 +501,15 @@ def create_app(
         await socket.accept()
         client: asyncio.Queue = asyncio.Queue(maxsize=400)
         hub.clients[client] = None
+        # A tab that reconnects after a restart mustn't take over from the one in use: a new tab
+        # claims control itself when it has focus. With no tab in control, the first one takes it.
+        hub.activate(client if hub.active not in hub.clients else hub.active)
         # Watch for the tab closing while waiting for events; otherwise this handler
         # would sit on the queue forever and keep the server from shutting down.
-        closed = asyncio.ensure_future(_until_closed(socket))
+        closed = asyncio.ensure_future(_until_closed(socket, lambda: hub.activate(client)))
         try:
             await socket.send_json({"type": "status", "status": controller.snapshot()})
+            await socket.send_json({"type": "hello", "build": build})
             while True:
                 waiting = asyncio.ensure_future(client.get())
                 await asyncio.wait({waiting, closed}, return_when=asyncio.FIRST_COMPLETED)
@@ -492,6 +522,8 @@ def create_app(
         finally:
             closed.cancel()
             hub.clients.pop(client, None)
+            if hub.active is client:
+                hub.activate(next(reversed(hub.clients), None))
 
     # --- MCP: tools like Claude Code working the app -----------------------------------
 
