@@ -3,7 +3,7 @@
 
 import { state } from "./store.js";
 import { post } from "./api.js";
-import { h, modal, fill, formatDuration } from "./ui.js";
+import { h, modal, fill, formatDuration, act } from "./ui.js";
 
 const layerLine = (l) => `${l.name}: ${l.mode}, ${l.speed} mm/min, ${l.power}%${l.passes > 1 ? `, ${l.passes} passes` : ""}`;
 
@@ -15,6 +15,8 @@ const layerLine = (l) => `${l.name}: ${l.mode}, ${l.speed} mm/min, ${l.power}%${
 export async function confirmAndStart(job, warnings = [], { lines, startsFrom, summary, requestedBy } = {}) {
   summary ||= await post("/api/job/preview", { job });
   const all = [...warnings, ...summary.warnings];
+  // A leftover origin moves a Bed position job; offer to clear it here rather than in the Laser tab.
+  const shifted = summary.origin_offset ? all.at(-1) : null;
   const rows = lines || job.layers.map(layerLine);
   const from = startsFrom || (job.origin_mode === "origin" ? "the origin (design's front-left corner)" : "its position on the bed");
   const answer = await modal((form) => {
@@ -26,7 +28,7 @@ export async function confirmAndStart(job, warnings = [], { lines, startsFrom, s
         h("dt", {}, "Time"), h("dd", {}, `about ${formatDuration(summary.est_seconds)}`),
         h("dt", {}, "Starts from"), h("dd", {}, from),
         ...rows.flatMap((line, i) => [h("dt", {}, i ? "" : "Layers"), h("dd", {}, line)])),
-      all.length ? h("ul", {}, all.map((w) => h("li", {}, w))) : null,
+      all.length ? h("ul", {}, all.map((w) => h("li", {}, w, w === shifted ? clearOrigin() : null))) : null,
       h("p", { class: "note" }, "Goggles on, material flat and in focus, and stay with the machine while it runs."),
       h("div", { class: "actions" },
         h("button", { class: "btn", value: "", autofocus: true }, "Cancel"),
@@ -36,6 +38,17 @@ export async function confirmAndStart(job, warnings = [], { lines, startsFrom, s
   if (answer !== "go") return false;
   await post("/api/job/start", { job });
   return true;
+}
+
+function clearOrigin() {
+  const button = h("button", {
+    type: "button", class: "btn small", style: "margin-left:8px",
+    onclick: act(async () => {
+      await post("/api/origin/clear");
+      button.replaceWith(h("strong", {}, " Cleared: it burns where it sits on the canvas."));
+    }),
+  }, "Clear origin");
+  return button;
 }
 
 /** Trace the job's outline: laser off, or a faint dot if that's switched on in the Laser tab. */

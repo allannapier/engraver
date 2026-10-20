@@ -430,7 +430,8 @@ async function startJob() {
 
 async function frameJob() {
   const { job } = await buildJob("Job");
-  await frame(job);
+  const summary = await frame(job);
+  if (summary.origin_offset) toast(summary.warnings.at(-1), "warn");
 }
 
 function initJobs() {

@@ -294,3 +294,25 @@ def test_frame_estimate_counts_the_trip_there_and_back(client):
     est = wait_for(client, lambda s: s["job"]["state"] == "running")["job"]["est_seconds"]
     assert 5.5 < est < 7
     client.post("/api/job/stop")
+
+
+def test_a_set_origin_is_flagged_on_bed_position_jobs(client):
+    connect(client)
+    summary = client.post("/api/job/preview", json={"job": SQUARE}).json()
+    assert summary["origin_offset"] is None and not summary["warnings"]
+    client.post("/api/jog", json={"dx": 40, "dy": 15})
+    wait_for(client, lambda s: s["state"] == "Idle" and s["wpos"] == [40, 15])
+    client.post("/api/origin/set")
+    wait_for(client, lambda s: s["wco"] == [40, 15])
+    summary = client.post("/api/job/preview", json={"job": SQUARE}).json()
+    assert summary["origin_offset"] == [40, 15]
+    assert "40.0 mm right and 15.0 mm back" in summary["warnings"][-1]
+    # From the origin, the origin is the point: nothing to warn about.
+    summary = client.post("/api/job/preview", json={"job": {**SQUARE, "origin_mode": "origin"}}).json()
+    assert summary["origin_offset"] is None and not summary["warnings"]
+    frame = client.post("/api/job/frame", json={"job": SQUARE}).json()
+    assert frame["origin_offset"] == [40, 15]
+    wait_for(client, lambda s: s["job"]["state"] == "done")
+    client.post("/api/origin/clear")
+    wait_for(client, lambda s: s["wco"] == [0, 0])
+    assert client.post("/api/job/preview", json={"job": SQUARE}).json()["origin_offset"] is None
