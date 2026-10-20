@@ -204,6 +204,13 @@ function drawOverlay() {
   const upp = unitsPerPx();
   const b = bed();
 
+  // The active material area.
+  const area = state.config.areas?.find((a) => a.id === state.ui.areaId) || state.config.areas?.[0];
+  if (area) {
+    el("rect", { class: "material-area", x: area.x, y: b.h - area.y - area.h, width: area.w, height: area.h }, overlay);
+    el("text", { class: "material-label", x: area.x, y: b.h - area.y - area.h, dy: "-0.4em", "font-size": 11 * upp }, overlay).textContent = area.name;
+  }
+
   // Outline of the whole job, with its size: what Frame will trace.
   const job = aabb(outputObjects());
   if (job) {

@@ -542,6 +542,7 @@ def create_app(
                 "laser_mode": settings.get("32") != 0,
             },
             "bed_mm": [machine().bed_w, machine().bed_h],
+            "material_areas": [a.model_dump() for a in store.settings.areas],
         }
         if not status["connected"]:
             state["ports"] = ports_list()

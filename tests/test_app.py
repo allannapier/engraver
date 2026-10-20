@@ -296,6 +296,17 @@ def test_frame_estimate_counts_the_trip_there_and_back(client):
     client.post("/api/job/stop")
 
 
+def test_material_areas(client):
+    area = {"id": "my-area1", "name": "Board", "x": 30, "y": 112, "w": 305, "h": 155}
+    r = client.put("/api/config", json={"areas": [area]})
+    assert r.json()["config"]["areas"] == [area]
+    # Other settings leave the areas alone.
+    client.put("/api/config", json={"machine": {"jog_feed": 1500}})
+    assert client.get("/api/state").json()["config"]["areas"] == [area]
+    assert client.put("/api/config", json={"areas": [{**area, "w": 0}]}).status_code == 422
+    assert client.put("/api/config", json={"areas": []}).json()["config"]["areas"] == []
+
+
 def test_a_set_origin_is_flagged_on_bed_position_jobs(client):
     connect(client)
     summary = client.post("/api/job/preview", json={"job": SQUARE}).json()

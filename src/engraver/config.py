@@ -41,10 +41,23 @@ class CameraSettings(BaseModel):
         return points
 
 
+class MaterialArea(BaseModel):
+    """A piece of material on the bed, saved by name: front-left corner and size in mm, in the
+    coordinates a Bed position job burns at (measured from the origin when one is set)."""
+
+    id: str = Field(max_length=40)
+    name: str = Field(min_length=1, max_length=60)
+    x: float = Field(ge=-2000, le=2000)
+    y: float = Field(ge=-2000, le=2000)
+    w: float = Field(gt=0, le=4000)
+    h: float = Field(gt=0, le=4000)
+
+
 class Settings(BaseModel):
     machine: MachineProfile = MachineProfile()
     bugs: BugSettings = BugSettings()
     camera: CameraSettings = CameraSettings()
+    areas: list[MaterialArea] = []
 
 
 def default_path() -> Path:
@@ -108,5 +121,7 @@ class ConfigStore:
             bugs_patch["repo"] = str(bugs_patch["repo"]).strip().removeprefix("https://github.com/").strip("/")
         bugs = {**current["bugs"], **bugs_patch}
         camera = {**current["camera"], **(patch.get("camera") or {})}
-        self.settings = Settings.model_validate({"machine": machine, "bugs": bugs, "camera": camera})
+        self.settings = Settings.model_validate(
+            {"machine": machine, "bugs": bugs, "camera": camera, "areas": patch.get("areas", current["areas"])}
+        )
         self.save()
