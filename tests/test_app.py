@@ -294,3 +294,23 @@ def test_frame_estimate_counts_the_trip_there_and_back(client):
     est = wait_for(client, lambda s: s["job"]["state"] == "running")["job"]["est_seconds"]
     assert 5.5 < est < 7
     client.post("/api/job/stop")
+
+
+def test_jobs_and_jogs_stay_inside_the_travel_once_homed(client):
+    connect(client)
+    for line in ("$22=1", "$23=3", "$$", "$H"):
+        client.post("/api/command", json={"line": line})
+    wait_for(client, lambda s: s["homed"] and s["state"] == "Idle")
+    r = client.post("/api/jog", json={"dx": 500, "dy": 0}).json()
+    assert r["limited"] and r["dx"] == 410 and r["dy"] == 0
+    wait_for(client, lambda s: s["state"] == "Idle" and s["wpos"][0] == 410)
+    client.post("/api/jog", json={"dx": -110, "dy": 0})
+    wait_for(client, lambda s: s["state"] == "Idle" and s["wpos"][0] == 300)
+    client.post("/api/origin/set")
+    wait_for(client, lambda s: s["wco"] == [300, 0])
+    # 10 to 30 mm from an origin at 300 fits; 100 to 150 mm would run 40 mm past the end.
+    assert client.post("/api/job/preview", json={"job": SQUARE}).status_code == 200
+    far = {"layers": [{**SQUARE["layers"][0], "polylines": [[[100, 10], [150, 10]]]}]}
+    for path in ("/api/job/preview", "/api/job/start", "/api/job/frame"):
+        r = client.post(path, json={"job": far})
+        assert r.status_code == 422 and "right by 40 mm" in r.json()["detail"], path

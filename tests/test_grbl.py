@@ -293,12 +293,73 @@ def test_jobs_without_stages_report_none(rig):
     wait_for(lambda: ctl.job.state == "done", message="job done")
 
 
-def test_jog_stops_at_travel_once_homed(rig):
+def test_waiting_jog_reports_a_refusal(rig):
     ctl, sim, _ = rig
+    ctl.jog(5, 0, 6000, wait=3)
+    sim._exec_gcode = lambda line, jog: 15  # jog target exceeds travel
+    with pytest.raises(MachineError, match="refused the jog"):
+        ctl.jog(5, 0, 6000, wait=3)
+
+
+def test_waiting_jog_retries_a_garbled_line(rig):
+    ctl, sim, _ = rig
+    real = sim._exec_gcode
+    calls = []
+
+    def flaky(line, jog):
+        calls.append(line)
+        return 1 if len(calls) == 1 else real(line, jog)
+
+    sim._exec_gcode = flaky
+    ctl.jog(5, 0, 6000, wait=3)
+    assert len(calls) == 2
+
+
+def home(ctl, mask):
+    """Turn homing on with the given $23 direction mask, then home."""
+    for line in ("$22=1", f"$23={mask}", "$27=1", "$$"):
+        ctl.command(line)
+    wait_for(lambda: ctl.settings.get(23) == mask and ctl.settings.get(27) == 1, message="settings")
     ctl.command("$H")
-    wait_for(lambda: ctl.state == "Idle" and ctl.homed, message="homed")
-    ctl.jog(0, 9999, 6000)
-    wait_for(lambda: sim.mpos[1] == ctl.settings[131] and ctl.state == "Idle", message="clamped to travel")
-    ctl.jog(0, 5, 6000)  # already at the end: nothing to send
-    ctl.jog(-9999, 0, 6000)
-    wait_for(lambda: sim.mpos[0] == 0.0 and ctl.state == "Idle", message="clamped to zero")
+    wait_for(lambda: ctl.state == "Idle" and ctl.snapshot()["homed"], message="homed")
+
+
+def test_jogs_are_not_limited_before_homing(rig):
+    ctl, sim, _ = rig
+    assert ctl.limits() is None
+    assert ctl.jog(-5, 0, 6000, wait=3) == (-5, 0)
+    wait_for(lambda: sim.mpos == [-5.0, 0.0], message="jog past zero")
+
+
+def test_jog_stops_at_the_travel_when_homed_towards_negative(rig):
+    # The A10's way: home at the front left, machine space 0 to the travel.
+    ctl, sim, _ = rig
+    home(ctl, mask=3)
+    assert ctl.limits() == [(0.0, 409.0), (0.0, 399.0)]
+    assert ctl.jog(0, 9999, 6000, wait=3) == (0, 399)
+    assert ctl.jog(0, 5, 6000) == (0, 0)  # straight away: limited from where the first jog ends
+    wait_for(lambda: sim.mpos == [0.0, 399.0] and ctl.mpos == [0.0, 399.0], message="clamped to travel")
+    wait_for(lambda: ctl._jog_end is None, message="jog settled")
+    assert ctl.jog(0, 5, 6000) == (0, 0)  # and from the status reports once it has stopped
+    assert ctl.jog(-5, -10, 6000, wait=3) == (0, -10)
+
+
+def test_jog_stops_at_the_travel_when_homed_towards_positive(rig):
+    # Stock GRBL: home at the positive end, machine space below it.
+    ctl, sim, _ = rig
+    home(ctl, mask=0)
+    assert ctl.limits() == [(-409.0, 0.0), (-399.0, 0.0)]
+    assert ctl.jog(5, 0, 6000) == (0, 0)
+    assert ctl.jog(-9999, -20, 6000, wait=3) == (-409, -20)
+    wait_for(lambda: sim.mpos == [-409.0, -20.0] and ctl.state == "Idle", message="clamped to travel")
+
+
+def test_an_alarm_forgets_the_home_position(rig):
+    ctl, sim, _ = rig
+    home(ctl, mask=3)
+    sim.speed = 1
+    ctl.command("G1 X200 F600")
+    wait_for(lambda: ctl.state == "Run", message="moving")
+    sim.write(p.SOFT_RESET)
+    wait_for(lambda: ctl.state == "Alarm", message="alarm")
+    assert ctl.limits() is None and not ctl.snapshot()["homed"]
