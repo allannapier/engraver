@@ -291,3 +291,14 @@ def test_jobs_without_stages_report_none(rig):
     ctl.start(square(), stages=[{"layer": "x"}], line_stages=[0])  # mismatched lengths are dropped
     assert ctl.job.public()["stage"] is None
     wait_for(lambda: ctl.job.state == "done", message="job done")
+
+
+def test_jog_stops_at_travel_once_homed(rig):
+    ctl, sim, _ = rig
+    ctl.command("$H")
+    wait_for(lambda: ctl.state == "Idle" and ctl.homed, message="homed")
+    ctl.jog(0, 9999, 6000)
+    wait_for(lambda: sim.mpos[1] == ctl.settings[131] and ctl.state == "Idle", message="clamped to travel")
+    ctl.jog(0, 5, 6000)  # already at the end: nothing to send
+    ctl.jog(-9999, 0, 6000)
+    wait_for(lambda: sim.mpos[0] == 0.0 and ctl.state == "Idle", message="clamped to zero")

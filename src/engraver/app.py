@@ -362,10 +362,34 @@ def create_app(
         result = build_job(body.job, machine())
         return "\n".join(result.lines) + "\n"
 
+    def check_travel(result, origin_mode: str) -> None:
+        """Refuse a job or frame that runs past the travel the controller reports in $130/$131."""
+        travel = controller.travel()
+        if not controller.connected or not travel:
+            return
+        b = result.bounds
+        # From the origin the job sits at the work zero; otherwise it is placed on the bed as drawn.
+        ox, oy = controller.snapshot()["wco"] if origin_mode != "absolute" else (0.0, 0.0)
+        over = {
+            "left": -(ox + b.min_x),
+            "right": ox + b.max_x - travel[0],
+            "front": -(oy + b.min_y),
+            "back": oy + b.max_y - travel[1],
+        }
+        sides = [
+            f"{side} by {amount:.0f} mm" if amount >= 1 else side for side, amount in over.items() if amount > 0.01
+        ]
+        if sides:
+            raise JobError(
+                f"The job would go past the machine's {travel[0]:.0f} × {travel[1]:.0f} mm travel ({', '.join(sides)}). "
+                "Move the origin or the design."
+            )
+
     @app.post("/api/job/start")
     def job_start(body: JobBody):
         require_laser_mode()
         result = build_job(body.job, machine())
+        check_travel(result, body.job.origin_mode)
         app.state.last_job = bugs.describe_job(body.job, result, "job")
         controller.start(
             result.lines,
@@ -382,6 +406,7 @@ def create_app(
     def job_frame(body: FrameBody):
         profile = machine()
         result = build_job(body.job, profile)
+        check_travel(result, body.job.origin_mode)
         lines = frame_gcode(result.bounds, profile, dot_power=body.dot_power, finish=body.job.finish)
         app.state.last_job = {**bugs.describe_job(body.job, result, "frame"), "frame_gcode": lines}
         b = result.bounds
@@ -494,6 +519,12 @@ def create_app(
             },
             "bed_mm": [machine().bed_w, machine().bed_h],
         }
+        travel = [settings.get("130"), settings.get("131")]
+        if all(travel) and (abs(travel[0] - machine().bed_w) > 0.5 or abs(travel[1] - machine().bed_h) > 0.5):
+            state["travel_mismatch"] = (
+                f"The machine reports {travel[0]:.0f} × {travel[1]:.0f} mm of travel ($130/$131), "
+                f"but the bed is set to {machine().bed_w:.0f} × {machine().bed_h:.0f} mm. Change the bed size in Settings."
+            )
         if not status["connected"]:
             state["ports"] = ports_list()
         return state

@@ -144,6 +144,7 @@ class GrblController:
         self.version = ""
         self.settings: dict[int, float] = {}
         self.alarm: str | None = None
+        self.homed = False
         self.job: Job | None = None
         self._manual: deque[str] = deque()
         self._sent: deque[tuple[int, bool, str]] = deque()  # (bytes, is_job_line, text)
@@ -193,7 +194,14 @@ class GrblController:
             return
         with self._lock:
             self._require_free()
+            if line.upper() == "$H":
+                self.homed = True
             self._manual.append(line)
+
+    def travel(self) -> tuple[float, float] | None:
+        """The `$130`/`$131` travel in mm, once the controller has reported both."""
+        x, y = self.settings.get(130), self.settings.get(131)
+        return (x, y) if x and y else None
 
     def jog(self, dx: float, dy: float, feed: float) -> None:
         if dx == 0 and dy == 0:
@@ -202,6 +210,12 @@ class GrblController:
             self._require_free()
             if self.state not in ("Idle", "Jog"):
                 raise MachineError(f"Can't move while the machine is {self.state.lower()}.")
+            # Once homed, machine coordinates run 0 to the travel, and a jog past either end
+            # trips the hard limit and alarms. Stop at the end instead.
+            if self.homed and (travel := self.travel()):
+                dx, dy = (min(max(self.mpos[i] + d, 0.0), travel[i]) - self.mpos[i] for i, d in enumerate((dx, dy)))
+                if abs(dx) < 0.001 and abs(dy) < 0.001:
+                    return
             self._manual.append(f"$J=G91 G21 X{dx:.3f} Y{dy:.3f} F{feed:.0f}")
 
     def jog_cancel(self) -> None:
@@ -557,6 +571,8 @@ class GrblController:
         self.substate = status.get("substate")
         if self.state != "Alarm":
             self.alarm = None
+        else:
+            self.homed = False
         if "wco" in status:
             self.wco = status["wco"][:2]
         if "mpos" in status:
