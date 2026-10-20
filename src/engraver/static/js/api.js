@@ -38,6 +38,7 @@ export const post = (path, body = {}) => api(path, { method: "POST", body });
 // Reconnects on its own, so restarting the server doesn't need a page reload.
 export function connectEvents(onEvent, onLink) {
   let socket;
+  let build = null;
   let retry = 500;
   const open = () => {
     socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
@@ -45,7 +46,16 @@ export function connectEvents(onEvent, onLink) {
       retry = 500;
       onLink?.(true);
     };
-    socket.onmessage = (msg) => onEvent(JSON.parse(msg.data));
+    socket.onmessage = (msg) => {
+      const event = JSON.parse(msg.data);
+      if (event.type === "hello") {
+        // The server was updated while this tab stayed open: its code is out of date.
+        if (build && build !== event.build) location.reload();
+        build = event.build;
+        return;
+      }
+      onEvent(event);
+    };
     socket.onclose = () => {
       onLink?.(false);
       setTimeout(open, retry);
@@ -53,4 +63,10 @@ export function connectEvents(onEvent, onLink) {
     };
   };
   open();
+  // Tell the server which tab the person is using; MCP page actions go there.
+  const claim = () => {
+    if (!document.hidden && socket?.readyState === WebSocket.OPEN) socket.send("active");
+  };
+  window.addEventListener("focus", claim);
+  document.addEventListener("visibilitychange", claim);
 }

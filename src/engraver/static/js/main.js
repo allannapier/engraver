@@ -512,6 +512,16 @@ async function boot() {
   emit("status");
   refreshPorts().catch(() => {});
 
+  let banner = null;
+  const controlBanner = (inControl) => {
+    banner?.remove();
+    banner = null;
+    if (inControl) return;
+    banner = h("div", { class: "tab-banner", role: "status" }, "Another Engraver tab is in control. Use this one by clicking in it.");
+    banner.onclick = () => { document.dispatchEvent(new Event("visibilitychange")); window.dispatchEvent(new Event("focus")); };
+    document.body.prepend(banner);
+  };
+
   connectEvents((event) => {
     if (event.type === "status") {
       state.status = event.status;
@@ -521,6 +531,8 @@ async function boot() {
       if (event.kind === "error") toast(event.text, "error");
     } else if (event.type === "mcp") {
       handleMcp(event);
+    } else if (event.type === "control") {
+      controlBanner(event.active || event.tabs < 2);
     } else if (event.type === "mcp-note") {
       toast(event.text);
     }

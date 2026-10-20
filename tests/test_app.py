@@ -294,3 +294,22 @@ def test_frame_estimate_counts_the_trip_there_and_back(client):
     est = wait_for(client, lambda s: s["job"]["state"] == "running")["job"]["est_seconds"]
     assert 5.5 < est < 7
     client.post("/api/job/stop")
+
+
+def test_page_actions_go_to_the_active_tab():
+    import asyncio
+
+    from engraver.app import Hub
+
+    hub = Hub()
+    old, new = asyncio.Queue(), asyncio.Queue()
+    hub.clients[old] = None
+    hub.clients[new] = None
+    hub.activate(new)
+    assert hub.send_to_page({"type": "mcp"}) and new.qsize() == 2 and old.qsize() == 1
+    hub.activate(old)
+    assert hub.send_to_page({"type": "mcp"})
+    kinds = []
+    while not old.empty():
+        kinds.append(old.get_nowait())
+    assert kinds[-2:] == [{"type": "control", "active": True, "tabs": 2}, {"type": "mcp"}]
