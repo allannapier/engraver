@@ -363,3 +363,25 @@ def test_an_alarm_forgets_the_home_position(rig):
     sim.write(p.SOFT_RESET)
     wait_for(lambda: ctl.state == "Alarm", message="alarm")
     assert ctl.limits() is None and not ctl.snapshot()["homed"]
+
+
+def test_waiting_jog_fails_at_once_when_the_connection_drops(rig):
+    import threading
+
+    ctl, sim, _ = rig
+    sim._parse_pending = lambda: None  # takes the line, never answers
+    errors = []
+
+    def jog():
+        try:
+            ctl.jog(5, 0, 6000, wait=8)
+        except MachineError as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=jog)
+    worker.start()
+    time.sleep(0.2)
+    started = time.monotonic()
+    ctl._alive = False  # the IO thread closes the port as if the cable were pulled
+    worker.join(timeout=5)
+    assert errors and time.monotonic() - started < 3
