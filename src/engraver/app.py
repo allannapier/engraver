@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from . import __version__, bugs, mcp
 from .config import ConfigStore
-from .gcode import JobError, JobSpec, MachineProfile, build_job, frame_gcode
+from .gcode import MAX_FRAME_DOT_PERCENT, JobError, JobSpec, MachineProfile, build_job, frame_gcode
 from .grbl.controller import GrblController, MachineError, list_ports
 from .grbl.simulator import GrblSim
 from .library import LibraryError, MaterialLibrary, UserMaterial
@@ -85,6 +85,12 @@ class JogBody(BaseModel):
     dx: float = Field(default=0, ge=-500, le=500)
     dy: float = Field(default=0, ge=-500, le=500)
     feed: float | None = Field(default=None, gt=0, le=20000)
+
+
+class GotoBody(BaseModel):
+    x: float = Field(ge=0, le=1000)
+    y: float = Field(ge=0, le=1000)
+    dot: bool = False
 
 
 class JobBody(BaseModel):
@@ -334,6 +340,15 @@ def create_app(
     @app.post("/api/jog/cancel")
     def jog_cancel():
         controller.jog_cancel()
+        return {"ok": True}
+
+    @app.post("/api/goto")
+    def goto(body: GotoBody):
+        profile = machine()
+        if not (0 <= body.x <= profile.bed_w and 0 <= body.y <= profile.bed_h):
+            raise HTTPException(400, "That point is off the bed. Pick a point inside it.")
+        dot_s = round(MAX_FRAME_DOT_PERCENT / 100 * profile.s_max) if body.dot else 0
+        controller.go_to(body.x, body.y, dot_s)
         return {"ok": True}
 
     @app.post("/api/origin/{action}")

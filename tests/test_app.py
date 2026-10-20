@@ -294,3 +294,13 @@ def test_frame_estimate_counts_the_trip_there_and_back(client):
     est = wait_for(client, lambda s: s["job"]["state"] == "running")["job"]["est_seconds"]
     assert 5.5 < est < 7
     client.post("/api/job/stop")
+
+
+def test_goto_moves_head_and_rejects_bad_points(client):
+    assert client.post("/api/goto", json={"x": 10, "y": 20}).status_code == 409
+    connect(client)
+    assert client.post("/api/goto", json={"x": 10, "y": 20}).status_code == 200
+    wait_for(client, lambda s: s["state"] == "Idle" and abs(s["wpos"][0] - 10) < 0.01 and abs(s["wpos"][1] - 20) < 0.01)
+    assert client.post("/api/goto", json={"x": 10, "y": 20, "dot": True}).status_code == 200
+    assert client.post("/api/goto", json={"x": 5000, "y": 20}).status_code == 422
+    assert client.post("/api/goto", json={"x": 399, "y": 5000}).status_code == 422
