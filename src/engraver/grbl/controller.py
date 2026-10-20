@@ -296,6 +296,28 @@ class GrblController:
             self._manual.append("M5")
             self._manual.append("G90 G0 X0 Y0")
 
+    def go_to(self, x: float, y: float, dot_s: int = 0) -> None:
+        """Move the head to work X, Y with the laser off, or with a brief faint dot when `dot_s` > 0."""
+        with self._lock:
+            self._require_free()
+            if self.state != "Idle":
+                raise MachineError(f"Can't move while the machine is {self.state.lower()}.")
+            # Work X, Y plus the origin offset is where the head goes; past the travel it would trip a limit.
+            limits = self.limits()
+            if limits and not all(
+                lo - 0.01 <= v + self.wco[i] <= hi + 0.01
+                for i, (v, (lo, hi)) in enumerate(zip((x, y), limits, strict=True))
+            ):
+                raise MachineError(
+                    "That point is past the end of the machine's travel. Check the bed size and the origin."
+                )
+            self._manual.append("M5")
+            self._manual.append(f"G90 G0 X{x:.3f} Y{y:.3f}")
+            if dot_s > 0:
+                self._manual.append(f"M3 S{dot_s}")
+                self._manual.append("G4 P1")
+                self._manual.append("M5")
+
     def start(
         self,
         lines: list[str],

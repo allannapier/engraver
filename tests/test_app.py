@@ -296,6 +296,16 @@ def test_frame_estimate_counts_the_trip_there_and_back(client):
     client.post("/api/job/stop")
 
 
+def test_goto_moves_head_and_rejects_bad_points(client):
+    assert client.post("/api/goto", json={"x": 10, "y": 20}).status_code == 409
+    connect(client)
+    assert client.post("/api/goto", json={"x": 10, "y": 20}).status_code == 200
+    wait_for(client, lambda s: s["state"] == "Idle" and abs(s["wpos"][0] - 10) < 0.01 and abs(s["wpos"][1] - 20) < 0.01)
+    assert client.post("/api/goto", json={"x": 10, "y": 20, "dot": True}).status_code == 200
+    assert client.post("/api/goto", json={"x": 5000, "y": 20}).status_code == 422
+    assert client.post("/api/goto", json={"x": 399, "y": 5000}).status_code == 422
+
+
 def test_jobs_and_jogs_stay_inside_the_travel_once_homed(client):
     connect(client)
     for line in ("$22=1", "$23=3", "$$", "$H"):
@@ -314,6 +324,21 @@ def test_jobs_and_jogs_stay_inside_the_travel_once_homed(client):
     for path in ("/api/job/preview", "/api/job/start", "/api/job/frame"):
         r = client.post(path, json={"job": far})
         assert r.status_code == 422 and "right by 40 mm" in r.json()["detail"], path
+
+
+def test_goto_stays_inside_the_travel_once_homed(client):
+    connect(client)
+    for line in ("$22=1", "$23=3", "$$", "$H"):
+        client.post("/api/command", json={"line": line})
+    wait_for(client, lambda s: s["homed"] and s["state"] == "Idle")
+    client.post("/api/jog", json={"dx": 100, "dy": 0})
+    wait_for(client, lambda s: s["state"] == "Idle" and s["wpos"][0] == 100)
+    client.post("/api/origin/set")
+    wait_for(client, lambda s: s["wco"] == [100, 0])
+    # On the bed as drawn, but 100 + 350 mm is past the 410 mm travel.
+    r = client.post("/api/goto", json={"x": 350, "y": 20})
+    assert r.status_code == 409 and "travel" in r.json()["detail"]
+    assert client.post("/api/goto", json={"x": 300, "y": 20}).status_code == 200
 
 
 def test_material_areas(client):

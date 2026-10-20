@@ -5,7 +5,7 @@
 // section is built once and kept, so a live preview survives the Setup tab redrawing.
 
 import { state, on, emit, uid, newLayer, LAYER_COLORS, commit, select } from "./store.js";
-import { api } from "./api.js";
+import { api, post } from "./api.js";
 import { h, fill, toast, act, modal, closeModal } from "./ui.js";
 import {
   cameraSettings, isCalibrated, listCameras, openCamera, holdCamera, closeCamera, grabFrame,
@@ -114,6 +114,7 @@ async function calibrate() {
         + `<text class="pt-label" x="${x + r * 1.4}" y="${y - r * 1.4}" font-size="${r * 2.2}">${i + 1}</text>`;
     }).join("");
   };
+  const ready = () => state.status.connected && state.status.state === "Idle";
   const drawRows = () => {
     fill(rows,
       h("span", { class: "note" }, ""), h("span", { class: "note" }, "X (mm)"), h("span", { class: "note" }, "Y (mm)"), h("span"),
@@ -125,6 +126,26 @@ async function calibrate() {
           type: "button", class: `btn small${i === current ? "" : " ghost"}`,
           onclick: () => { current = i; drawRows(); drawMarks(); },
         }, p.u === null ? (i === current ? "Click it" : "Pick") : (i === current ? "Click again" : "✓ Repick")),
+        h("span"),
+        h("div", { class: "row wrap", style: "grid-column:2 / -1" },
+          h("button", {
+            type: "button", class: "btn small ghost", disabled: !ready(),
+            title: "Fill X and Y from where the laser head is now",
+            onclick: () => {
+              [p.x, p.y] = state.status.wpos.map((v) => Math.round(v * 10) / 10);
+              drawRows();
+            },
+          }, "Use head position"),
+          h("button", {
+            type: "button", class: "btn small ghost", disabled: !ready() || !Number.isFinite(p.x) || !Number.isFinite(p.y),
+            title: "Move the head here with the laser off",
+            onclick: act(() => post("/api/goto", { x: p.x, y: p.y })),
+          }, "Go to this point"),
+          h("button", {
+            type: "button", class: "btn small ghost", disabled: !ready() || !Number.isFinite(p.x) || !Number.isFinite(p.y),
+            title: "Move the head here and turn the beam on at 2 % for a second. Goggles on.",
+            onclick: act(() => post("/api/goto", { x: p.x, y: p.y, dot: true })),
+          }, "Go with dot")),
       ]));
     message.textContent = current >= 0
       ? `Click the centre of mark ${current + 1} (${CORNERS[current].toLowerCase()}) in the picture.`
@@ -144,13 +165,22 @@ async function calibrate() {
   drawRows();
   drawMarks();
 
+  let wasReady = ready();
+  let open = true;
+  on("status", () => {
+    if (!open || ready() === wasReady) return;
+    wasReady = ready();
+    drawRows();
+  });
+
   let saved = null;
   const choice = await modal((form) => form.append(
     h("h1", {}, "Calibrate the camera"),
-    h("p", { class: "note" }, "Move the head out of the way. Each mark's X and Y are millimetres from the bed's front-left corner, as shown on the canvas."),
+    h("p", { class: "note" }, "Move the head out of the way to take the picture. Each mark's X and Y are millimetres from the bed's front-left corner, as shown on the canvas."),
     wrap,
     message,
     rows,
+    h("p", { class: "note warn" }, "Go with dot turns the beam on at 2 % for a second while the head is still. Wear your goggles; it can mark paper and dark surfaces."),
     h("div", { class: "actions spread" },
       h("button", {
         type: "button", class: "btn ghost",
@@ -174,6 +204,7 @@ async function calibrate() {
       }, "Save"),
     ),
   ), { wide: true });
+  open = false;
   if (choice !== "save" || !saved) return;
   await saveCamera({ points: saved });
   showPhoto(await photographBed());
