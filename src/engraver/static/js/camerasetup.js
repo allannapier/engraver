@@ -80,7 +80,10 @@ function addMarks(points) {
 
 function pointsOrDefaults() {
   const saved = cameraSettings().points || [];
-  return saved.length === 4 ? saved.map((p) => ({ ...p })) : defaultMarks().map((p) => ({ ...p, u: null, v: null }));
+  // Keep the bed positions from last time, but not where they were in the picture: the
+  // camera may have moved, and a mark that isn't clicked again would keep its old spot.
+  const marks = saved.length === 4 ? saved : defaultMarks();
+  return marks.map(({ x, y }) => ({ x, y, u: null, v: null }));
 }
 
 async function calibrate() {
