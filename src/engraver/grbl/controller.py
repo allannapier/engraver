@@ -22,6 +22,19 @@ from dataclasses import dataclass, field
 from . import protocol as p
 
 
+class _Tracked(str):
+    """A manual line whose ok or error somebody is waiting for."""
+
+    done: threading.Event
+    error: int | None
+
+    def __new__(cls, text: str):
+        obj = super().__new__(cls, text)
+        obj.done = threading.Event()
+        obj.error = None
+        return obj
+
+
 class MachineError(Exception):
     """A request the machine can't act on right now. The message is shown to the user."""
 
@@ -195,14 +208,31 @@ class GrblController:
             self._require_free()
             self._manual.append(line)
 
-    def jog(self, dx: float, dy: float, feed: float) -> None:
+    def jog(self, dx: float, dy: float, feed: float, wait: float | None = None) -> None:
+        """Queue a jog. With `wait`, block until GRBL answers it and raise if it refuses.
+
+        A garbled line (error 1 or 2, usually serial noise) is sent once more.
+        """
         if dx == 0 and dy == 0:
             return
-        with self._lock:
-            self._require_free()
-            if self.state not in ("Idle", "Jog"):
-                raise MachineError(f"Can't move while the machine is {self.state.lower()}.")
-            self._manual.append(f"$J=G91 G21 X{dx:.3f} Y{dy:.3f} F{feed:.0f}")
+        for attempt in range(2 if wait else 1):
+            line = _Tracked(f"$J=G91 G21 X{dx:.3f} Y{dy:.3f} F{feed:.0f}")
+            with self._lock:
+                self._require_free()
+                if self.state not in ("Idle", "Jog"):
+                    raise MachineError(f"Can't move while the machine is {self.state.lower()}.")
+                self._manual.append(line)
+            if not wait:
+                return
+            if not line.done.wait(wait):
+                raise MachineError("The machine didn't answer the jog. Check the connection and try again.")
+            if line.error is None:
+                return
+            if line.error in (1, 2) and attempt == 0:
+                continue
+            if line.error == 0:
+                raise MachineError("The jog was cancelled by a stop or a reset.")
+            raise MachineError(f"The machine refused the jog: {p.error_text(line.error)}.")
 
     def jog_cancel(self) -> None:
         self._write(p.JOG_CANCEL)
@@ -347,6 +377,7 @@ class GrblController:
             self._thread = None
             job = self.job
             was_connected = self.connected or self.state == "Connecting"
+            self._abandon()  # nobody will answer a jog that's waiting now
             self._reset_state()
             if job and job.state in ("running", "paused", "stopping"):
                 job.state, job.error, job.ended = "error", "Connection lost", time.time()
@@ -370,6 +401,7 @@ class GrblController:
         """
         if self._halt:
             return
+        self._abandon()
         self._manual.clear()
         if self.job and self.job.state in ("running", "paused"):
             self.job.state = "stopping"
@@ -381,6 +413,7 @@ class GrblController:
         halt, self._halt = self._halt, None
         self._expect_reset = True
         self._write(p.SOFT_RESET)
+        self._abandon()
         self._sent.clear()
         self._sent_bytes = 0
         if self.job and self.job.state == "stopping":
@@ -505,6 +538,7 @@ class GrblController:
             self._log("error", f"Alarm: {self.alarm}")
             if self.job and self.job.state in ("running", "paused", "stopping"):
                 self.job.state, self.job.error, self.job.ended = "error", f"Alarm: {self.alarm}", time.time()
+            self._abandon()
             self._sent.clear()
             self._sent_bytes = 0
             self._manual.clear()
@@ -514,6 +548,7 @@ class GrblController:
                 self._expect_reset = False
             else:
                 # The controller restarted on its own (power blip, USB glitch).
+                self._abandon()
                 self._sent.clear()
                 self._sent_bytes = 0
                 if self.job and self.job.state in ("running", "paused", "stopping"):
@@ -548,6 +583,19 @@ class GrblController:
             self._log("error", f"{text} → {p.error_text(error)}")
         elif text not in ("$I", "$$"):
             self._log("rx", "ok")
+        if not is_job and isinstance(text, _Tracked):
+            self._settle(text, error)
+
+    @staticmethod
+    def _settle(text: str, error: int | None) -> None:
+        if isinstance(text, _Tracked):
+            text.error = error
+            text.done.set()
+
+    def _abandon(self) -> None:
+        """Fail every waiting line: what they were queued behind is being thrown away."""
+        for text in [*self._manual, *(t for _, job, t in self._sent if not job)]:
+            self._settle(text, 0)
 
     def _on_status(self, text: str) -> None:
         status = p.parse_status(text)

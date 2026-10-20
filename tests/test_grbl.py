@@ -291,3 +291,47 @@ def test_jobs_without_stages_report_none(rig):
     ctl.start(square(), stages=[{"layer": "x"}], line_stages=[0])  # mismatched lengths are dropped
     assert ctl.job.public()["stage"] is None
     wait_for(lambda: ctl.job.state == "done", message="job done")
+
+
+def test_waiting_jog_reports_a_refusal(rig):
+    ctl, sim, _ = rig
+    ctl.jog(5, 0, 6000, wait=3)
+    sim._exec_gcode = lambda line, jog: 15  # jog target exceeds travel
+    with pytest.raises(MachineError, match="refused the jog"):
+        ctl.jog(5, 0, 6000, wait=3)
+
+
+def test_waiting_jog_retries_a_garbled_line(rig):
+    ctl, sim, _ = rig
+    real = sim._exec_gcode
+    calls = []
+
+    def flaky(line, jog):
+        calls.append(line)
+        return 1 if len(calls) == 1 else real(line, jog)
+
+    sim._exec_gcode = flaky
+    ctl.jog(5, 0, 6000, wait=3)
+    assert len(calls) == 2
+
+
+def test_waiting_jog_fails_at_once_when_the_connection_drops(rig):
+    import threading
+
+    ctl, sim, _ = rig
+    sim._parse_pending = lambda: None  # takes the line, never answers
+    errors = []
+
+    def jog():
+        try:
+            ctl.jog(5, 0, 6000, wait=8)
+        except MachineError as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=jog)
+    worker.start()
+    time.sleep(0.2)
+    started = time.monotonic()
+    ctl._alive = False  # the IO thread closes the port as if the cable were pulled
+    worker.join(timeout=5)
+    assert errors and time.monotonic() - started < 3

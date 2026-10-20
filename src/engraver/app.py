@@ -35,6 +35,8 @@ from .saved import NotFound, SavedError, Shelf, designs_folder, new_id
 STATIC_DIR = Path(__file__).parent / "static"
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 SIM_PORT = "sim"
+JOG_ACK_SECONDS = 3.0  # how long a jog waits for GRBL to answer
+JOG_MOVE_SECONDS = 15.0  # how long the MCP jog tool waits for the move to finish
 
 
 class Hub:
@@ -354,7 +356,7 @@ def create_app(
 
     @app.post("/api/jog")
     def jog(body: JogBody):
-        controller.jog(body.dx, body.dy, body.feed or store.settings.machine.jog_feed)
+        controller.jog(body.dx, body.dy, body.feed or store.settings.machine.jog_feed, wait=JOG_ACK_SECONDS)
         return {"ok": True}
 
     @app.post("/api/jog/cancel")
@@ -569,7 +571,17 @@ def create_app(
     def jog_tool(args: dict) -> dict:
         body = JogBody(dx=args.get("dx_mm", 0), dy=args.get("dy_mm", 0), feed=args.get("feed"))
         jog(body)
-        return {"text": f"Jogging {body.dx:g}, {body.dy:g} mm.", "note": f"moved the head {body.dx:g}, {body.dy:g} mm"}
+        # Status reports lag the ack a little, so give the move a moment to show up before waiting it out.
+        start = time.monotonic()
+        while time.monotonic() - start < JOG_MOVE_SECONDS:
+            if controller.state != "Jog" and time.monotonic() - start > 0.4:
+                break
+            time.sleep(0.05)
+        wpos = controller.snapshot()["wpos"]
+        return {
+            "text": f"Moved {body.dx:g}, {body.dy:g} mm. The head is at X{wpos[0]:g} Y{wpos[1]:g} mm.",
+            "note": f"moved the head {body.dx:g}, {body.dy:g} mm",
+        }
 
     @tool
     def origin_tool(args: dict) -> dict:
