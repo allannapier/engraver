@@ -55,13 +55,13 @@ export const state = {
   doc: defaultDoc(),
   selection: new Set(),
   status: { connected: false, state: "Disconnected", wpos: [0, 0], wco: [0, 0], settings: {}, job: null },
-  config: { machine: {}, bugs: {} },
+  config: { machine: {}, bugs: {}, areas: [] },
   machine: { bed_w: 410, bed_h: 400, max_feed: 6000 },
   materials: [], // what the Material box offers: the person's own first, then the built-in starting points
   builtin: [],
   library: [],
   never: [],
-  ui: { materialId: "", originMode: "absolute", finish: "origin", frameDot: false, jogStep: 10, lockAspect: true },
+  ui: { materialId: "", originMode: "absolute", finish: "origin", frameDot: false, jogStep: 10, areaId: "", lockAspect: true },
 };
 
 export function setMaterials({ builtin, library }) {
@@ -194,6 +194,7 @@ function cleanObject(raw, layerIds, fallbackLayer) {
     h: finite(raw.h, 10, 0.1, 5000),
     rot: finite(raw.rot, 0, 0, 360),
   };
+  if (obj.kind === "image" && raw.cutoff) obj.cutoff = Math.round(finite(raw.cutoff, 128, 1, 255));
   if (obj.kind === "text") {
     if (typeof raw.text?.value !== "string") obj.kind = "svg";
     else obj.text = { value: raw.text.value.slice(0, 2000), font: String(raw.text.font || "sans-serif").slice(0, 120), bold: Boolean(raw.text.bold), italic: Boolean(raw.text.italic) };
@@ -224,6 +225,7 @@ export function loadDoc(data, { record = true } = {}) {
     finish: pick(ui.finish, ["origin", "stay"], state.ui.finish),
     frameDot: typeof ui.frameDot === "boolean" ? ui.frameDot : state.ui.frameDot,
     jogStep: pick(ui.jogStep, [0.1, 1, 10, 50], state.ui.jogStep),
+    areaId: typeof ui.areaId === "string" ? ui.areaId.slice(0, 40) : state.ui.areaId,
     lockAspect: typeof ui.lockAspect === "boolean" ? ui.lockAspect : state.ui.lockAspect,
   });
   if (record) commit();

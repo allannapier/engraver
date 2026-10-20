@@ -4,7 +4,7 @@
 
 import { state, bed, select, selected, newLayer, layerById, objectById, LAYER_COLORS } from "./store.js";
 import { aabb, viewCenter } from "./stage.js";
-import { objectFromSvgText, sanitizeSvg, contentFromSvg } from "./svgutil.js";
+import { objectFromSvgText, objectFromImage, sanitizeSvg, contentFromSvg } from "./svgutil.js";
 
 const NO_DESIGN = "There's no design with that id on the canvas. Call get_state for the ids.";
 
@@ -127,6 +127,23 @@ export async function applyAction(a, added = new Map()) {
     select([o.id]);
     return `Added "${o.name}", ${o.w.toFixed(0)} × ${o.h.toFixed(0)} mm, on ${layerById(o.layerId).name}${partner ? `, lined up with "${partner.name}"` : ""}`;
   }
+  if (a.type === "add_image") {
+    // The same path as dropping a file on the page: objectFromImage checks the type and decodes it.
+    const o = await objectFromImage(String(a.data_url || ""), String(a.name || "Image").slice(0, 40));
+    const w = clamp(num(a.width_mm) ?? Math.min(o.w, 80), 1, b.w);
+    Object.assign(o, { h: (o.h * w) / o.w, w });
+    o.layerId = layerFor({ ...a, mode: "fill" }).id;
+    if (layerById(o.layerId).mode !== "fill") throw new Error("Pictures engrave, so they need a fill layer. Pick a fill layer or omit layer_id.");
+    if (num(a.cutoff) !== null) o.cutoff = clamp(Math.round(a.cutoff), 1, 255);
+    const c = viewCenter();
+    o.x = c.x - o.w / 2;
+    o.y = c.y - o.h / 2;
+    moveTo(o, num(a.x_mm), num(a.y_mm));
+    state.doc.objects.push(o);
+    added.set(o.name, o);
+    select([o.id]);
+    return `Added picture "${o.name}", ${o.w.toFixed(0)} × ${o.h.toFixed(0)} mm, on ${layerById(o.layerId).name}`;
+  }
   if (a.type === "replace_design") {
     const o = objectById(a.design_id);
     if (!o) throw new Error(NO_DESIGN);
@@ -149,6 +166,8 @@ export async function applyAction(a, added = new Map()) {
   if (a.type === "transform_design") {
     const o = objectById(a.design_id);
     if (!o) throw new Error(NO_DESIGN);
+    // Check before changing anything, so a refused call leaves the design as it was.
+    if (num(a.cutoff) !== null && o.kind !== "image") throw new Error("Only pictures have a cutoff. Use set_layer's image_mode and the layer's threshold for other designs.");
     const cx = o.x + o.w / 2, cy = o.y + o.h / 2;
     const ratio = o.h / o.w;
     const w = num(a.width_mm), h2 = num(a.height_mm);
@@ -161,6 +180,7 @@ export async function applyAction(a, added = new Map()) {
     if (num(a.rotation_deg) !== null) o.rot = ((a.rotation_deg % 360) + 360) % 360;
     moveTo(o, num(a.x_mm), num(a.y_mm));
     if (a.layer_id && layerById(a.layer_id)) o.layerId = a.layer_id;
+    if (num(a.cutoff) !== null) o.cutoff = clamp(Math.round(a.cutoff), 1, 255);
     return `Adjusted "${o.name}"`;
   }
   if (a.type === "add_layer") {

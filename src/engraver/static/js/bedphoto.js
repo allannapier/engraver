@@ -1,6 +1,6 @@
 // The camera photo shown on the canvas: the camera tool takes one, the bar under the
 // canvas says how old it is and retakes or hides it. A photo taken for an MCP client
-// shows here too, so the person sees what the client saw.
+// shows here too (unless the person hid the photo), so the person sees what the client saw.
 
 import { state, on } from "./store.js";
 import { act, toast } from "./ui.js";
@@ -8,6 +8,10 @@ import { showPhoto, shownPhoto } from "./stage.js";
 import { isCalibrated, photographBed, latestPhoto, forgetPhoto } from "./camera.js";
 
 const $ = (id) => document.getElementById(id);
+
+// Set when the person clicks Hide: photos an MCP client takes afterwards stay off the canvas
+// until the person takes one themselves.
+let hiddenByUser = false;
 
 function age(at) {
   const s = Math.round((Date.now() - at) / 1000);
@@ -35,6 +39,7 @@ export async function takePhoto() {
   }
   const button = document.querySelector('[data-tool="camera"]');
   button.disabled = true;
+  hiddenByUser = false;
   try {
     showPhoto(await photographBed());
   } finally {
@@ -46,12 +51,14 @@ export async function takePhoto() {
 export function initBedPhoto() {
   $("photo-retake").addEventListener("click", act(takePhoto));
   $("photo-hide").addEventListener("click", () => {
+    hiddenByUser = true;
     showPhoto(null);
     sync();
   });
   on("camera", () => {
     const latest = latestPhoto();
-    if (latest && shownPhoto() !== latest) showPhoto(latest);
+    if (!latest) hiddenByUser = false;
+    if (latest && !hiddenByUser && shownPhoto() !== latest) showPhoto(latest);
     if (!latest && shownPhoto()) showPhoto(null);
     sync();
   });
