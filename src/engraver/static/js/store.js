@@ -224,6 +224,7 @@ export function loadDoc(data, { record = true } = {}) {
     finish: pick(ui.finish, ["origin", "stay"], state.ui.finish),
     frameDot: typeof ui.frameDot === "boolean" ? ui.frameDot : state.ui.frameDot,
     jogStep: pick(ui.jogStep, [0.1, 1, 10, 50], state.ui.jogStep),
+    areaId: typeof ui.areaId === "string" ? ui.areaId.slice(0, 40) : state.ui.areaId,
     lockAspect: typeof ui.lockAspect === "boolean" ? ui.lockAspect : state.ui.lockAspect,
   });
   if (record) commit();

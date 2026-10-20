@@ -1,8 +1,9 @@
 // Material areas: named pieces of material on the bed, kept in the settings file.
 // The active one is outlined on the canvas, and designs can be centred on it or fitted to it.
-// Areas are in machine coordinates (front-left corner, size); the canvas flips y when drawing.
+// Areas are in the canvas's mm, as a Bed position job uses them (from the origin when one is
+// set): front-left corner and size, y away from the front. The canvas flips y when drawing.
 
-import { state, emit, uid, bed, commit, selected } from "./store.js";
+import { state, emit, uid, bed, commit, selected, saveUi } from "./store.js";
 import { api } from "./api.js";
 import { h, fill, toast, modal, closeModal, act } from "./ui.js";
 import { aabb } from "./stage.js";
@@ -14,6 +15,7 @@ async function saveAreas(next) {
   const result = await api("/api/config", { method: "PUT", body: { areas: next } });
   state.config = result.config;
   if (!areas().some((a) => a.id === state.ui.areaId)) state.ui.areaId = areas().at(-1)?.id || "";
+  saveUi();
   emit("config");
 }
 
@@ -55,11 +57,11 @@ export function fitToMaterial() {
   commit();
 }
 
-/** Where the head is in machine coordinates (work position plus the work offset). */
+/** Where the head is, in the coordinates a Bed position job burns at (the work position). */
 function headPosition() {
   if (!state.status.connected) throw new Error("Connect the machine to use the head position, or type the numbers.");
-  const [wx, wy] = state.status.wpos, [ox = 0, oy = 0] = state.status.wco || [];
-  return { x: +(wx + ox).toFixed(1), y: +(wy + oy).toFixed(1) };
+  const [wx, wy] = state.status.wpos;
+  return { x: +wx.toFixed(1), y: +wy.toFixed(1) };
 }
 
 export function areaDialog() {
@@ -76,7 +78,7 @@ export function areaDialog() {
     const list = h("div", { class: "area-list" });
     const draw = () => fill(list, areas().length
       ? areas().map((a) => h("div", { class: "row" },
-        h("label", {}, h("input", { type: "radio", name: "area", checked: a.id === activeArea()?.id, onchange: () => { state.ui.areaId = a.id; emit("config"); } }),
+        h("label", {}, h("input", { type: "radio", name: "area", checked: a.id === activeArea()?.id, onchange: () => { state.ui.areaId = a.id; saveUi(); emit("config"); } }),
           ` ${a.name}: x ${a.x} to ${+(a.x + a.w).toFixed(1)}, y ${a.y} to ${+(a.y + a.h).toFixed(1)} mm`),
         h("button", { type: "button", class: "btn small ghost", onclick: act(async () => { await saveAreas(areas().filter((b) => b.id !== a.id)); draw(); }) }, "Delete")))
       : h("p", { class: "note" }, "No material areas saved yet."));

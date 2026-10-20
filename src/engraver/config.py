@@ -42,7 +42,8 @@ class CameraSettings(BaseModel):
 
 
 class MaterialArea(BaseModel):
-    """A piece of material on the bed, saved by name: front-left corner and size in machine mm."""
+    """A piece of material on the bed, saved by name: front-left corner and size in mm, in the
+    coordinates a Bed position job burns at (measured from the origin when one is set)."""
 
     id: str = Field(max_length=40)
     name: str = Field(min_length=1, max_length=60)
