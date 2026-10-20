@@ -194,6 +194,7 @@ function cleanObject(raw, layerIds, fallbackLayer) {
     h: finite(raw.h, 10, 0.1, 5000),
     rot: finite(raw.rot, 0, 0, 360),
   };
+  if (obj.kind === "image" && raw.cutoff) obj.cutoff = Math.round(finite(raw.cutoff, 128, 1, 255));
   if (obj.kind === "text") {
     if (typeof raw.text?.value !== "string") obj.kind = "svg";
     else obj.text = { value: raw.text.value.slice(0, 2000), font: String(raw.text.font || "sans-serif").slice(0, 120), bold: Boolean(raw.text.bold), italic: Boolean(raw.text.italic) };

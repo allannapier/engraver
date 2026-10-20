@@ -316,3 +316,37 @@ def test_state_carries_design_svgs_within_a_budget():
     assert "too large" in ctx["designs"][1]["svg"]
     assert "svg" not in ctx["designs"][2]
     assert ctx["selected"]["svg"].endswith("…[truncated]")
+
+
+PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+    b"\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\xf0\x1f\x00\x05\x00\x01\xff\x89\x99=\x1d\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+def test_add_image_reads_a_local_picture_and_relays_a_data_url(client, tmp_path):
+    rpc(client, "initialize", {"clientInfo": {"name": "Claude Code"}})
+    logo = tmp_path / "logo.png"
+    logo.write_bytes(PNG)
+    event, result = run_with_page(
+        client,
+        "add_image",
+        {"path": str(logo), "width_mm": 30, "cutoff": 180},
+        lambda e: {"ok": True, "result": {"text": "Added picture", "design_id": "o1"}},
+    )
+    assert event["action"] == "edit"
+    assert event["args"]["type"] == "add_image" and "path" not in event["args"]
+    assert event["args"]["data_url"].startswith("data:image/png;base64,iVBOR")
+    assert event["args"]["cutoff"] == 180 and not result["isError"]
+
+
+def test_add_image_refuses_anything_that_is_not_a_picture(client, tmp_path):
+    secret = tmp_path / "notes.png"
+    secret.write_text("not a picture")
+    for args in (
+        {"path": str(secret), "width_mm": 10},
+        {"path": str(tmp_path / "x.txt"), "width_mm": 10},
+        {"path": str(tmp_path / "gone.png"), "width_mm": 10},
+        {"width_mm": 10},
+    ):
+        assert call(client, "add_image", args)["isError"]

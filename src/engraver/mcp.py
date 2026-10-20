@@ -17,12 +17,14 @@ What a client can and can't do with the machine:
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import secrets
 import sys
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from . import __version__
@@ -115,6 +117,12 @@ ALIGN_WITH = {
         "coordinates line up with it; width_mm, x_mm and y_mm are ignored."
     ),
 }
+CUTOFF = {
+    "type": "integer",
+    "minimum": 1,
+    "maximum": 255,
+    "description": "Pictures on a threshold layer: pixels darker than this (0-255) burn. Try 128 to 215; higher keeps more detail.",
+}
 IMAGE_MODE = {"type": "string", "enum": ["threshold", "dither", "grayscale"]}
 
 DESIGN_TOOLS: list[dict] = [
@@ -141,6 +149,32 @@ DESIGN_TOOLS: list[dict] = [
                 "align_with": ALIGN_WITH,
             },
             "required": ["name", "svg", "width_mm", "mode"],
+        },
+    },
+    {
+        "name": "add_image",
+        "description": (
+            "Add a picture (PNG, JPEG, GIF or WebP) to the canvas, the same as the person dropping the file on the app. "
+            "Give a local file path or a base64 data URL. Pictures engrave on a fill layer; with image_mode threshold, "
+            "cutoff sets which pixels burn (darker than the cutoff burns), per picture. Check the result with get_canvas_image "
+            "and adjust with transform_design."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Short name shown in the app."},
+                "path": {"type": "string", "description": "Path of an image file on this computer."},
+                "data_url": {"type": "string", "description": "data:image/png;base64,... (or jpeg, gif, webp)."},
+                "width_mm": {"type": "number", "description": "Finished width on the material in mm."},
+                "cutoff": CUTOFF,
+                "layer_id": {
+                    "type": "string",
+                    "description": "Existing fill layer to put it on. Omit to use the first fill layer, or a new one.",
+                },
+                "x_mm": {"type": "number", "description": "Left edge, mm from the bed's left. Omit to centre."},
+                "y_mm": {"type": "number", "description": "Front edge, mm from the bed's front. Omit to centre."},
+            },
+            "required": ["width_mm"],
         },
     },
     {
@@ -173,6 +207,7 @@ DESIGN_TOOLS: list[dict] = [
                 "height_mm": {"type": "number"},
                 "rotation_deg": {"type": "number"},
                 "layer_id": {"type": "string", "description": "Move the design to this layer."},
+                "cutoff": CUTOFF,
             },
             "required": ["design_id"],
         },
@@ -396,6 +431,29 @@ TOOL_NAMES = {tool["name"] for tool in TOOLS}
 # --- calling tools -----------------------------------------------------------------------
 
 
+IMAGE_TYPES = {b"\x89PNG\r\n\x1a\n": "png", b"\xff\xd8\xff": "jpeg", b"GIF8": "gif"}
+MAX_IMAGE_BYTES = 12_000_000
+
+
+def image_data_url(path: str) -> str:
+    """Read an image file for add_image. Only real PNG, JPEG, GIF and WebP files are passed on."""
+    file = Path(path).expanduser()
+    if file.suffix.lower() not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+        raise ToolError("That isn't a PNG, JPEG, GIF or WebP file. Give the path of an image.")
+    try:
+        if file.stat().st_size > MAX_IMAGE_BYTES:
+            raise ToolError("That image is over 12 MB. Shrink it first and try again.")
+        data = file.read_bytes()
+    except OSError:
+        raise ToolError(f"Engraver couldn't read {path}. Check the path and try again.") from None
+    kind = next((name for magic, name in IMAGE_TYPES.items() if data.startswith(magic)), None)
+    if kind is None and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        kind = "webp"
+    if kind is None:
+        raise ToolError("That file isn't a PNG, JPEG, GIF or WebP picture. Give the path of an image.")
+    return f"data:image/{kind};base64,{base64.b64encode(data).decode()}"
+
+
 def text(value: Any) -> list[dict]:
     if not isinstance(value, str):
         value = json.dumps(value, indent=1)
@@ -520,6 +578,13 @@ class Server:
                 {"type": "image", "data": url[len(prefix) :], "mimeType": "image/jpeg"},
                 *text(shot.get("about", "")),
             ]
+        if name == "add_image":
+            args = dict(args)
+            path = args.pop("path", None)
+            if isinstance(path, str) and path.strip() and not args.get("data_url"):
+                args["data_url"] = image_data_url(path.strip())
+            if not isinstance(args.get("data_url"), str):
+                raise ToolError("Give either path (a file on this computer) or data_url.")
         # Everything else changes the canvas or starts something in the page.
         args = dict(args, type=name) if name in DESIGN_ACTIONS else dict(args)
         reply = await self.bridge.call(name if name not in DESIGN_ACTIONS else "edit", {"client": self.client, **args})

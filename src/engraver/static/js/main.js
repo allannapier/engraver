@@ -2,7 +2,7 @@
 // property bar, job bar and keyboard, and starts the panels.
 
 import { installDiagnostics } from "./diagnostics.js";
-import { state, on, emit, bed, commit, undo, redo, canUndo, canRedo, select, selected, layerById, loadDoc, storedProject, uid, setMaterials } from "./store.js";
+import { state, on, emit, bed, commit, touch, undo, redo, canUndo, canRedo, select, selected, layerById, loadDoc, storedProject, uid, setMaterials } from "./store.js";
 import { api, post, connectEvents } from "./api.js";
 import { h, icon, toast, modal, formatDuration, act, download } from "./ui.js";
 import { initStage, fitView, zoomBy, viewCenter, aabb, isTyping, onDoubleClick, outputObjects } from "./stage.js";
@@ -245,6 +245,14 @@ function initProps() {
     bar.hidden = picked.length === 0;
     $("prop-edit-text").hidden = !(picked.length === 1 && textOf(picked[0]));
     $("stage-hint").hidden = picked.length > 0;
+    const one0 = picked.length === 1 ? picked[0] : null;
+    const owner = one0 && layerById(one0.layerId);
+    const tunable = one0?.kind === "image" && owner?.mode === "fill" && owner.imageMode === "threshold";
+    $("prop-cutoff-wrap").hidden = !tunable;
+    if (tunable) {
+      $("prop-cutoff").value = one0.cutoff || owner.threshold;
+      $("prop-cutoff-value").textContent = one0.cutoff ? one0.cutoff : `${owner.threshold} (layer)`;
+    }
     if (!picked.length) return;
     const box = aabb(picked);
     const one = picked.length === 1 ? picked[0] : null;
@@ -292,6 +300,15 @@ function initProps() {
       $("stage").focus({ preventScroll: true });
     });
   }
+  // Live preview while dragging; one undo step when let go.
+  $("prop-cutoff").addEventListener("input", (event) => {
+    const one = selected()[0];
+    if (!one) return;
+    one.cutoff = Number(event.target.value);
+    $("prop-cutoff-value").textContent = one.cutoff;
+    touch();
+  });
+  $("prop-cutoff").addEventListener("change", () => commit());
   $("prop-edit-text").addEventListener("click", () => textDialog(selected()[0]));
   lock.addEventListener("click", () => {
     state.ui.lockAspect = !state.ui.lockAspect;
@@ -436,7 +453,8 @@ async function startJob() {
 
 async function frameJob() {
   const { job } = await buildJob("Job");
-  await frame(job);
+  const summary = await frame(job);
+  if (summary.origin_offset) toast(summary.warnings.at(-1), "warn");
 }
 
 function initJobs() {
@@ -518,6 +536,16 @@ async function boot() {
   emit("status");
   refreshPorts().catch(() => {});
 
+  let banner = null;
+  const controlBanner = (inControl) => {
+    banner?.remove();
+    banner = null;
+    if (inControl) return;
+    banner = h("div", { class: "tab-banner", role: "status" }, "Another Engraver tab is in control. Use this one by clicking in it.");
+    banner.onclick = () => { document.dispatchEvent(new Event("visibilitychange")); window.dispatchEvent(new Event("focus")); };
+    document.body.prepend(banner);
+  };
+
   connectEvents((event) => {
     if (event.type === "status") {
       state.status = event.status;
@@ -527,6 +555,8 @@ async function boot() {
       if (event.kind === "error") toast(event.text, "error");
     } else if (event.type === "mcp") {
       handleMcp(event);
+    } else if (event.type === "control") {
+      controlBanner(event.active || event.tabs < 2);
     } else if (event.type === "mcp-note") {
       toast(event.text);
     }

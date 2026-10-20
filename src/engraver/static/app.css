@@ -317,3 +317,5 @@ dialog .actions.spread > :last-child { margin-left: auto; }
 .calib-points input { width: 100%; }
 .calib-points .done { color: var(--ok); }
 dialog.wide:has(.calib) { width: min(980px, calc(100vw - 32px)); }
+
+.tab-banner { position: sticky; top: 0; z-index: 50; padding: 6px 12px; text-align: center; background: #b45309; color: #fff; font-size: 13px; cursor: pointer; }
